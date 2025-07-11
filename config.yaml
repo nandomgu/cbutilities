@@ -1,0 +1,157 @@
+project_name: micropatterns
+project_docker: cancerbits/dockr:ml2cellR
+
+
+project_root_host: /home/lmontano/projects/micropatterns
+data_root_host: /home/lmontano/data/micropatterns
+out_root_host: /home/lmontano/out/micropatterns
+metadata_root_host: /home/lmontano/metadata/micropatterns
+resources_root_host: /home/lmontano/
+
+
+# PATHS AS VISIBLE WITHIN RSTUDIO (should not be changed):
+project_root: /home/rstudio
+data_root: /home/rstudio/mnt_data
+out_root: /home/rstudio/mnt_out
+metadata_root: /home/rstudio/mnt_metadata
+resources_root: /home/rstudio/mnt_resources
+
+# PROJECT CONFIG:
+genome: cellranger_data/refdata-gex-GRCh38-2020-A
+genome_chromatin: cellranger_data/refdata-cellranger-atac-GRCh38-1.2.0
+genome_build: hg38
+cachedir: /home/rstudio/mnt_out/rcache
+
+#############################################
+# ANALYIS PARAMETERS
+#############################################
+
+# analysis version: change this id to start the analysis from scratch or reload previous results
+analysis.version: '20250603_jupiter'
+
+#gtf: cellranger_data/refdata-gex-GRCh38-2020-A/genes/genes.gtf older gtf file
+gtfpath: ~/ml2cell_code/metadata/gencode.v44.annotation.gtf.gz
+# DATASET IMPORT PATH CONFIG:
+dataset_name: Corces2016,Seruggia2024-1,Seruggia2024-2,Ludwig2019
+
+#the datasets marked as T are expected to be a reference. Please set the first dataset as a reference to avoid unexpected errors.
+is_reference: T,F,F,F
+
+#the datasets marked as T are expected to contain the experimental treatment rounds.
+is_protocol: F,T,T,F
+
+#the datasets marked as T are expected to be external comparison datasets. 
+is_external: F,F,F,T
+
+##vestigial parameters about the reference. currently everything is done through the dataset paths but we keep in case needed.
+reference_paths_counts: ~/mnt_out/atacseq_corces2016_reference_broadpeak/bwa/merged_library/macs2/broad_peak/consensus/consensus_peaks.mLb.clN.featureCounts.txt
+reference_paths_metadata: ~/ml2cell_noncode/metadata/Corces2016/metadata_srarunselector_corces_annotated.txt
+reference_paths_bam: ~/mnt_out/atacseq_corces2016_reference_broadpeak/bwa/merged_library/
+
+
+#DATASET PATHS. They also must include paths to the references. counts self and ref are the same path for the references. 
+dataset_paths_nfcore: ~/mnt_out/atacseq_corces2016_reference_broadpeak/,~/mnt_out/seruggia2024-1_atac_biodirt_yespeak/,~/mnt_out/atacseq_seruggia20242_bob_try2/,~/mnt_out/atacseq_ludwig2019/
+dataset_paths_metadata: ~/ml2cell_code/metadata/metadata_srarunselector_corces_annotated.txt,~/ml2cell_code/metadata/samplesheet2024-1_annotation_treatment.csv,~/ml2cell_code/metadata/samplesheet_seruggia_2024_2_conditions_annotated.csv,~/ml2cell_code/metadata/metadata_ludwig2019.csv
+dataset_paths_counts_self: ~/mnt_out/atacseq_corces2016_reference_broadpeak/bwa/merged_library/macs2/broad_peak/consensus/consensus_peaks.mLb.clN.featureCounts.txt,~/mnt_out/seruggia2024-1_atac_biodirt_yespeak/bwa/merged_library/macs2/broad_peak/consensus/consensus_peaks.mLb.clN.featureCounts.txt,~/mnt_out/atacseq_seruggia20242_bob_try2/bwa/merged_library/macs2/broad_peak/consensus/consensus_peaks.mLb.clN.featureCounts.txt,~/mnt_out/atacseq_Ludwig2019/bwa/merged_library/macs2/broad_peak/consensus/consensus_peaks.mLb.clN.featureCounts.txt
+dataset_paths_counts_ref: ~/mnt_out/atacseq_corces2016_reference_broadpeak/bwa/merged_library/macs2/broad_peak/consensus/consensus_peaks.mLb.clN.featureCounts.txt,~/mnt_out/seruggia2024-1_ml2cell/20240223/,~/mnt_out/ml2cell_seruggia2024_2_broadpeak_20240618/,~/mnt_out/ml2cell_ludwig2019_20230606/
+dataset_paths_bam: ~/mnt_out/atacseq_corces2016_reference_broadpeak/bwa/merged_library/,~/mnt_out/seruggia2024-1_atac_biodirt_yespeak/bwa/merged_library/,~/mnt_out/atacseq_seruggia20242_bob_try2/bwa/merged_library/,~/mnt_out/atacseq_ludwig2019/bwa/merged_library/
+dataset_paths_fastq: ~/mnt_data/Corces2016,~/mnt_data/ATACseq_Seruggia_2024/00_fastq/,~/mnt_data/ATACseq_Seruggia_2024_2/00_fastq/,~/mnt_out/atacseq_seruggia20242_bob_try2/bwa/merged_library/,~/mnt_out/fetchngs_ludwig2019/fastq/
+
+
+#METADATA CONFIG
+#metadata_sample_name_col: column in the metadata which contains the unique sample identifiers 
+metadata_sample_name_col: Experiment,Experiment,Experiment,Experiment
+### reagents.- indicates all the columns associated with treatments. The .X is used to infer how many rounds of treatments there are, and what round each treatment is associated with.
+### annotvars.- the order of the variables in which to organise and order the heamtap columns
+reagents: epo.1,insulin.heparin.1,hydrocortisone.1,epo.2,insulin.heparin.2,hydrocortisone.2
+annotvars: epo.1,epo.2,hydrocortisone.1,hydrocortisone.2,insulin.heparin.1,insulin.heparin.2,rbc.round1
+cell_type_variable: celltype
+cell_group_vars: celltype,condition,tmnt.full,samplename
+target_cell_type: Ery
+exclude_cell_type: Blast,LSC,pHSC
+treatment_id_cols: rbc.round1,rbc.round2,rbc.combo,tmnt1,tmnt2,tmnt.full
+exclude: RBC-step-2--6D-r1,RBC-step-2--7D-r1,RBC-step-2--8D-r1
+peak_width: broad_peak
+
+# QC AND ANALYSIS PARAMCONFIG
+randomseed: 42
+min.expts: 6
+min.reads: 5
+filter.peaks: F
+filter.frip: T
+frip_threshold: 0.05,0.05,0.05,0.05
+#RANDOM FOREST CONFIG
+randomforest_ntrees: 500 
+randomforest_initial_components: 100
+randomforest_gini_threshold: 2
+randomforest_test_datasets: Seruggia2024-1,Seruggia2024-2
+#
+plotpath: ~/mnt_out/plots/
+
+##################################################################################
+#GSEA CONFIG
+##################################################################################
+
+gsea_celltype_searchterm: erythroc|erythrob|erythroi
+gsea_celltype_exclude: mouse
+gsea_plot_params_hyper: spaced4
+gsea_total_print_length: 80
+
+#PEAK SENSITIVITY ANALYSIS
+
+peak_sensitivity_threshold: 0.85
+
+## MISC PARAMETERS NEEDED IN OTHER SECTIONS (some may be not needed anymore)
+
+vst_name: vst
+################################################################################
+# pca projection parameters
+################################################################################
+
+n_top_var: Inf
+numcomp: 6
+alph: 0.99
+
+################################################################################
+#atac analysis parameters
+################################################################################
+
+MAX_DIST_GENE: 250000
+GENELIST_MIN_GENES: 3
+GENE_ASSOC_SIGCOR_THRESH: 0.05
+NUMTOPLOADINGS: 100000
+NUMBGSAMPLES: 10000
+
+
+
+################################################################################
+#TFBS parameters
+################################################################################
+
+z.thresh: 3 #threshold for the z score vs empirical background distirbution
+pct.thresh: 0.90 #threshold of percentile of frequency in the empirical background distribution
+
+################################################################################
+# fgsea parameters
+################################################################################
+
+numtop.fgsea: 100000
+
+################################################################################
+#high signal peak parameters
+################################################################################
+
+auc.thresh: .95
+max.peaks.pull: 8000
+
+
+################################################################################
+# supporting variables
+################################################################################
+
+rangefields: Geneid,Chr,Start,End,Strand,Length
+
+
+
+
+
