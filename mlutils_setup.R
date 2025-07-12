@@ -10326,4 +10326,16 @@ simpleCache(cachestring %>% addversion, {obj}, assignToVar="obj", recreate=T)
 obj  
 }
 						
+###################################################################################
+# get an english number
+###################################################################################
 
+english.number<- function(number) {
+  if (!requireNamespace("english", quietly = TRUE)) {
+    install.packages("english")
+  }
+  library(english)
+  
+  result <- as.character(english::as.english(number))
+  return(result)
+}
