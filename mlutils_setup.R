@@ -10313,5 +10313,17 @@ cellinfo.seriatecells.seurat=function(cellinfo, so , new.cells=T, ncells=100, re
           }
             
 }
-     
+###################################################################################
+# transfer specific cache name to the newest version						
+###################################################################################	
+
+################################################################################
+# move cache with specific string directly to the current version
+################################################################################
+						
+transfer.cache.direct=function(cachestring, obj){
+simpleCache(cachestring %>% addversion, {obj}, assignToVar="obj", recreate=T)
+obj  
+}
+						
 
