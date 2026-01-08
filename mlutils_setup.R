@@ -1,33 +1,73 @@
-sca=2.5
+################################################################################
+# adding a path for installing libraries
+################################################################################
+
+dir.create( "~/mnt_out/containerlibrary/", recursive=T)
+.libPaths(c(.libPaths(), "~/mnt_out/containerlibrary/"))
+
+################################################################################
+# installing and loading packages decision tree
+################################################################################
+
+install_and_load <- function(pkg) {
+  if (!require(pkg, character.only = TRUE)) {
+    # Try installing with BiocManager first
+    tryCatch({
+      BiocManager::install(pkg, dependencies = TRUE, update = FALSE, lib="~/mnt_out/containerlibrary/")
+    }, error = function(e) {
+      message(paste("BiocManager could not install", pkg, "- trying install.packages instead."))
+      install.packages(pkg, dependencies = TRUE, lib="~/mnt_out/containerlibrary/")
+    })
+    
+    # Load the package after installation
+    library(pkg, character.only = TRUE)
+  }
+}
+
 
 ################################################################################
 # load libraries and packages
 ################################################################################
 
-packages <- c("devtools", "dplyr","data.table","tidyr", "ggplot2","simpleCache","DESeq2","Seurat", 
-               "ggfortify", "ggExtra", "gridExtra", "ggforce", "ggrastr", "alluvial", "mltools", "GSVA", "tinytex", "hdf5r", "glmGamPoi", "gtools", "patchwork", "STRINGdb", "pcaMethods", "velocyto-team/velocyto.R",
-              "AUCell", "RcisTarget","GENIE3", 
-              "zoo", "mixtools", "rbokeh"
-              "DT", "NMF", "ComplexHeatmap", "R2HTML", "Rtsne",
-              "doMC", "doRNG", 
-              "aertslab/SCopeLoomR"
-              )
+packages <- c(
+    "GSVA", #calculating signature scores
+  "ggplot2",
+  "viridis",
+  "patchwork",
+  "TFBSTools", 
+  "ggwordcloud", #making word clouds
+  "simpleCache", #caching intermediate data for reproducibility
+  "ggVennDiagram",
+  "ComplexHeatmap",
+  "ggrepel", 
+  "ggrastr", 
+  "patchwork",
+  "dplyr", 
+  "data.table",
+  "ggwordcloud", 
+  "simpleCache",
+  "tidyr",
+  "DESeq2", 
+  "pROC",
+  "randomForest",
+  "motifmatchr",
+  "ggVennDiagram", 
+  "ggsignif"#,
+  #  "qusage"# problemativ at 4.1.3
+)
 
-# Function to check, install if necessary, and load packages
-install_and_load <- function(pkg) {
-  if (!require(pkg, character.only = TRUE)) {
-    if (grepl("/", pkg)) {
-      devtools::install_github(pkg)
-    } else {
-      BiocManager::install(pkg, dependencies = TRUE, update = FALSE)
-    }
-  }
-  library(pkg, character.only = TRUE)
-}
 
 # Apply the function to each package
 sapply(packages, install_and_load)
 
+#set cache dir
+
+setCacheDir("~/mnt_out/rcache")
+
+
+#requirement for hypeR installation 
+#devtools::install_version("msigdbr", version = "7.4.1")
+install_and_load("hypeR")
 
 
 ################################################################################
@@ -54,74 +94,229 @@ givename=
     names(x)= nam
     x
   } 
+
+
+################################################################################
+# updating configs
+################################################################################
           
+update_config <- function(config_a_path, config_b_path, output_path = "./config_modified.yaml") {
+  # Read files
+  config_a <- readLines(config_a_path)
+  config_b <- readLines(config_b_path)
+
+  # Parse A into named list
+  parse_line <- function(line) {trimws
+    parts <- strsplit(line, ":", fixed = TRUE)[[1]]
+    if (length(parts) >= 2) {
+      key <- trimws(parts[1])
+      value <- paste(parts[-1], collapse = ":") |> trimws()
+      return(setNames(list(value), key))
+    }
+    NULL
+  }
+
+  # Build a named vector of overrides
+  overrides <- lapply(config_a, parse_line)
+  overrides <- overrides[!sapply(overrides, is.null)]
+  overrides <- do.call(c, overrides)
+
+  # Update config B lines
+  updated_b <- sapply(config_b, function(line) {
+    parts <- strsplit(line, ":", fixed = TRUE)[[1]]
+    if (length(parts) >= 2) {
+      key <- trimws(parts[1])
+      if (key %in% names(overrides)) {
+        return(paste0(key, ": ", overrides[[key]]))
+      }
+    }
+    return(line)
+  })
+
+  # Write to file
+  writeLines(updated_b, output_path)
+}
+
+
+update_config2 <- function(config_a_path, config_b_path, output_path = "./config_modified.yaml") {
+  # Read files
+  config_a <- readLines(config_a_path)
+  config_b <- readLines(config_b_path)
+  
+  # Helper: extract YAML key from a line (before ":")
+  extract_key <- function(line) {
+    parts <- strsplit(line, ":", fixed = TRUE)[[1]]
+    if (length(parts) >= 2) {
+      return(trimws(parts[1]))
+    }
+    return(NA)
+  }
+  
+  # Get keys from config B
+  keys_b <- sapply(config_b, extract_key)
+  keys_b <- keys_b[!is.na(keys_b) & nzchar(keys_b)]
+  
+  # Filter out from A any line whose key appears in B
+  filtered_a <- config_a[!(sapply(config_a, extract_key) %in% keys_b)]
+  
+  # Append B to A
+  combined <- c(filtered_a, config_b)
+  
+  # Write output
+  writeLines(combined, output_path)
+}
+
+
+################################################################################
+# ACCESSORY FUNCTIONS. quick access functions to important info
+################################################################################
+
+get.experiments=function(condition, meta) meta %>% filter(Condition==!!condition) %>% pull(Experiment)
+
+get.dscategory= Vectorize(function(n) dataset.info$dscategory[n], USE.NAMES=F)
+
+get.dscategory.fromname= Vectorize(function(nm) dataset.info$dscategory[dataset.info$dataset_name==nm], USE.NAMES=F)
 ################################################################################
 # assembling workspace variables
 ################################################################################
 
-prep.dir.for.out.root= function(x) gsub("/home/rstudio/mnt_out|~/mnt_out", config$out_root_host, x)
+prep.dir.for.out.root= function(x) gsub("/home/rstudio/mnt_out|~/mnt_out", config$out_root_host, x) 
 
-prep.dir.for.in.root= function(x) gsub(config$out_root_host, config$out_root, x)
+prep.dir.external= function(x) gsub("/home/rstudio/mnt_out|~/mnt_out", config$out_root_host, x) %>%  gsub("/home/rstudio|~", config$project_root_host, .)
+
+
+  prep.dir.for.in.root <- function(x) {
+  gsub(config$out_root_host, config$out_root, x, fixed = TRUE)
+}
 
 prep.dir.for.project.root= function(x) gsub("~", config$project_root_host, x)
+
+
+
+################################################################################
+# constructing nfcore paths from within the pipeline
+################################################################################
+
+make.countpath=function(rootdir) paste0(rootdir, "bwa/merged_library/macs2/broad_peak/consensus/consensus_peaks.mLb.clN.featureCounts.txt")
 
 make.bigwigpath=function(rootdir) paste0(rootdir, "bwa/merged_library/bigwig/")
 make.profilepath= function(x) paste0(x, "/bwa/merged_library/deeptools/plotprofile/")
 
-allcolors=list(stdcolors = c(`2` = "#bebada", `4` = "#fccde5", `19` = "#80b1d3", 
-                             `13` = "#FEEDC3FF", `8` = "#ccebc5", `11` = "#FF7BBAFF", `7` = "#E6F288FF", 
-                             `1` = "#B5C8FAFF", `20` = "#ffed6f", `14` = "#FDA6D8FF", `18` = "#999999", 
-                             `15` = "#d9d9d9", `6` = "#b3de69", `12` = "#fdb462", `16` = "#bc80bd", 
-                             `5` = "#B4F9FDFF", `9` = "#fb8072", `3` = "#EE8B6EFF"), 
-               #celltype = c(HSC = "#ccebc5", pHSC = "#EE8B6EFF",`CD34 Cord Blood` = "#fb8072",`CD34 Bone Marrow` = "#d9d9d9",
-                # MPP = "#FDA6D8FF", LMPP = "#bebada",  GMP = "#80b1d3",Mono = "#fccde5", CMP = "#FEEDC3FF", MEP = "#E6F288FF",
-                # Ery = "#bc80bd",CLP = "#b3de69",Bcell = "#B4F9FDFF",CD4Tcell = "#999999",  CD8Tcell = "#B5C8FAFF",  NKcell = "#fdb462", 
-  #Round1 = "red", Round2 = "blue"), 
-  celltype=c(HSC="#CCEBC5", MPP="#008000", `CD34 Cord Blood` = "#32CD32", `CD34 Bone Marrow` = "#32CD32",  CLP="#1BCED0", LMPP="#446BDE", Bcell="#B4F9FD",CD4Tcell="#619EA0", CD8Tcell="#B5C8FA",
-    NKcell="#0747A3",   GMP="#80B1D3", Mono="#F7F7C6",
-    CMP="#FF8C00", MEP= "#FFD700" , Ery = "#bc80bd", Round1 = "red", Round2 = "blue"),
-               condition_replicate = c(`1-r1` = "#a6cee3", 
-                                       `1-r2` = "darkblue", `2-r1` = "#b2df8a", `2-r2` = "#33a02c", 
-                                       `3-r1` = "#fb9a99", `3-r2` = "#e31a1c", `4-r1` = "cyan", `4-r2` = "cyan4", 
-                                       `5-r1` = "#cab2d6", `5-r2` = "#6a3d9a", `6-r1` = "#ffff99", `6-r2` = "brown4", 
-                                       `7-r1` = "darkgoldenrod1", `7-r2` = "darkgoldenrod", `8-r1` = "deeppink", 
-                                       `8-r2` = "#bd2398"),
-               is.target = c(test = "blue", Ery = "red", 
-                             other = "grey"), Chr = c(chr1 = "#CA7643", chr2 = "#B5C670", 
-                                                      chr3 = "#B72F73", chr4 = "#149925", chr5 = "#C6B745", chr6 = "#56B640", 
-                                                      chr7 = "#27A116", chr8 = "#9543CB", chr9 = "#450D0A", chr10 = "#A7398B", 
-                                                      chr11 = "#2D742C", chr12 = "#24C813", chr13 = "#ED1055", chr14 = "#D6E65B", 
-                                                      chr15 = "#3A9D08", chr16 = "#9DA29C", chr17 = "#85A726", chr18 = "#96F764", 
-                                                      chr19 = "#BFE4DC", chr20 = "#A8A93F", chr21 = "#1F7446", chr22 = "#91E1F6", 
-                                                      chrX = "#0BEB95"), 
-               dsname=c(Corces2016="grey", "Seruggia2024-1"="red","Seruggia2024-2"="#fdc086", Ludwig2019="blue"),
-               rbc.round1=c("1"='#7fc97f',"2"='#beaed4',"3"='#fdc086',"4"='#ffff99',"5"='#386cb0',"6"='#f0027f',"7"='#bf5b17',"8"='#666666'),
-               roc.celltypes=c(Ery = "#B8AD3F", Bcell = "#EF3B69", MEP = "#7B44BD", CMP = "#19E9DC", 
-                               Erylineage1 = "#463C8C", Erylineage2 = "#74E51D", Blineage1 = "#0A31EA", 
-                               Blineage2 = "#49EDAE"),
-                               target=c(seruggia = "#DEC341", seruggia1 = "red", seruggia2 = "#fdc086", 
-                                        ludwig = "#E02FE5", epo2 = "#0DDC89", insulin.heparin1 = "#5038A1", 
-                                        hydrocortisone1 = "#518546", insulin.heparin2 = "#9B0645", hydrocortisone2 = "#5D2D40", 
-                                        epo.only = "#FB6C09", hydrocortisone.on = "darkgoldenrod1", insulin.heparin.on = "#4FA904", 
-                                        all.on = "#64D384",
-                                        Erylineage1 = "#463C8C", Erylineage2 = "#74E51D", Blineage1 = "#0A31EA", 
-                                        Blineage2 = "#49EDAE", HSC = "#ccebc5", pHSC = "#EE8B6EFF",`CD34 Cord Blood` = "#fb8072",`CD34 Bone Marrow` = "#d9d9d9",
-                 MPP = "#FDA6D8FF", LMPP = "#bebada",  GMP = "#80b1d3", Mono = "#fccde5", CMP = "#FEEDC3FF", MEP = "#E6F288FF",
-                 Ery = "#bc80bd",CLP = "#b3de69",Bcell = "#B4F9FDFF",CD4Tcell = "#999999",  CD8Tcell = "#B5C8FAFF",  NKcell = "#fdb462"), 
-  epo.1=c("1"="pink", "3"="red"),
-  epo.2=c("1"="pink", "3"="red"),
-  hydrocortisone.1=c("0"="cyan", "1"="cyan4"),
-  hydrocortisone.2=c("0"="cyan", "1"="cyan4"),
-  insulin.heparin.1=c("0"="darkgoldenrod1", "1"="darkgoldenrod"),
-  insulin.heparin.2=c("0"="darkgoldenrod1", "1"="darkgoldenrod"), 
-  epo.only=c("TRUE"="red", "FALSE"="pink"),
-    hydrocortisone.on=c("TRUE"="cyan4", "FALSE"="cyan"),
-    insulin.on=c("TRUE"="darkgoldenrod", "FALSE"="darkgoldenrod1"),
-  all.on=c("TRUE"="black", "FALSE"="grey")
+make.bampath=function(rootdir) paste0(rootdir, "/bwa/merged_library/")
+
+make.allbampath=function(rootdir) paste0(rootdir, "bwa/merged_library/*.bam")
+
+make.bampath.rep=function(rootdir) paste0(rootdir, "/bwa/merged_replicate/")
+
+
+clean.extension.bam=function(x) gsub(".mLb.clN.sorted.bam", "", x)
+
+get.nfcore.root=function(datasetnumber, dataset.info) dataset.info$dataset_paths_nfcore[datasetnumber] 
+
+################################################################################
+# get and assemble counts paths
+################################################################################
+
+get.counts.path.self=function(dataset, dataset.info){
+ 
+if(is.na(dataset.info$dataset_paths_counts_self[dataset])||dataset.info$dataset_paths_counts_self[dataset]=="NA"){
+
+  paste0(dataset.info$dataset_paths_nfcore[dataset], "bwa/merged_library/macs2/broad_peak/consensus/consensus_peaks.mLb.clN.featureCounts.txt")
+  
+}else{
+  dataset.info$dataset_paths_counts_self[dataset]
+}
+}
+
+get.counts.path.ref=function(dataset, dataset.info){
+  
+ 
+  
+  if(is.na(dataset.info$dataset_paths_counts_ref[dataset] %>% as.logical)||dataset.info$dataset_paths_counts_self[dataset]=="NA"){
+    #if it is not explicitly declared and it is a reference
+     if(dataset.info$is_reference[dataset] & sum(dataset.info$is_reference)==1){
+ out=get.counts.path.self(dataset, dataset.info)
+}else{
+    
+  out=paste0("/home/rstudio/mnt_out/ml2cell_", dataset.info$dataset_name[dataset], "_mapto_", dataset.info$dataset_name[dataset.info$is_reference]) %>% paste0(., "/allmergedcounts_withreference.txt")
+}}else{
+  
+  out=dataset.info$dataset_paths_counts_ref[dataset] %>% paste0(., "/allmergedcounts_withreference.txt")
+}
+  
+out
+}
+
+
+################################################################################
+# assemble the nextflow ml2cell command
+################################################################################
+
+assemble.ml2cell.nextflow=function(test.datasetnumber, reference.datasetnumber, dataset.info){
+  
+test.dataset=dataset.info$dataset_name[test.datasetnumber]
+reference.dataset=dataset.info$dataset_name[reference.datasetnumber]
+
+bamlocation= make.allbampath(get.nfcore.root(test.datasetnumber, dataset.info))
+  annotation= make.countpath(get.nfcore.root(reference.datasetnumber, dataset.info))
+  refdata=annotation
+  outdir= get.mappedcounts.path(test.dataset, reference.dataset, dataset.info)
+  
+  cmd <- sprintf(
+    "nextflow run /home/rstudio/ml2cell_code/nextflow/channeltest.nf --bamlocation \"%s\" -w %s --annotation %s --endparameter '\\-p' -with-report --refdata %s --outdir %s",
+    bamlocation,
+    dataset.info$nextflow_workdir,
+    annotation,
+    refdata,
+    outdir
   )
+  return(cmd)
+}
 
 
-                     
+
+################################################################################
+# function to get colors when present or not
+################################################################################
+
+default.colors=list()
+  default.colors[[2]]=c(`0` = "darkgoldenrod1", `1` = "darkgoldenrod",`FALSE` = "darkgoldenrod1", `TRUE` = "darkgoldenrod")
+
+getcolors <- function(df, colname, default = 2, tf.names = TRUE) {
+  # Ensure the global variable allcolors exists
+  if (!exists("allcolors", inherits = TRUE)) {
+    stop("Global variable 'allcolors' does not exist.")
+  }
+
+  # If colname is in allcolors, return the associated color vector
+  if (colname %in% names(allcolors)) {
+    return(allcolors[[colname]])
+  }
+
+  # If colname is a column in the dataframe
+  if (colname %in% colnames(df)) {
+    values <- unique(df[[colname]]) %>% removenas
+    if(!is.null(default.colors[[length(values)]])){
+      colors <- default.colors[[length(values)]]
+    }else{
+    colors <- grDevices::rainbow(length(values))
+    }
+    names(colors) <- values
+    return(colors)
+  }
+
+  # If colname is not in allcolors and not in df, handle default
+  if (default == 2) {
+    colors <- grDevices::rainbow(2)
+    if (tf.names) {
+      names(colors) <- c("TRUE", "FALSE")
+    }
+    return(colors)
+  }
+
+  # Otherwise, return random unnamed colors of length `default`
+  return(grDevices::rainbow(default))
+}
 
 
 ################################################################################
@@ -140,25 +335,130 @@ dataset.info=lapply(names(config), function(x){
 }) %>% givename(., names(config))
   
 dataset.info$is_reference=as.logical(dataset.info$is_reference) 
+dataset.info$is_external=as.logical(dataset.info$is_external) 
+dataset.info$is_test=as.logical(dataset.info$is_test) 
+dataset.info$filter.frip=as.logical(dataset.info$filter.frip) 
+dataset.info$filter.peaks=as.logical(dataset.info$filter.peaks)
+dataset.info$frip_threshold=as.numeric(dataset.info$frip_threshold)
+dataset.info$dataset_paths_counts_ref= lapply(1:length(dataset.info$dataset_paths_counts_ref), function(x) get.counts.path.ref(x, dataset.info)) %>% Reduce(c, .) 
+dataset.info$dataset_paths_counts_self= lapply(1:length(dataset.info$dataset_paths_counts_self), function(x)get.counts.path.self(x, dataset.info)) %>% Reduce(c, .) 
+
 dataset.info
 }                               
+#########################################
+
+
+################################################################################
+# incorporate csv data into an updated config file
+################################################################################
+fcat("Reading dataset_info.csv and incorporating data into config...")
+
+# Load required packages
+library(readr)
+
+# Read the CSV
+csv_data <- read_csv("~/dataset_info_example.csv")
+
+# Create an output file
+yaml_path <- "~/dataset.config.yaml"
+
+if(!file.exists(yaml_path)){
+fileConn <- file(yaml_path, open="a")
+}else{
+fileConn <- file(yaml_path, open="w")
+#writeLines("", fileConn)
+close(fileConn)
+fileConn <- file(yaml_path, open="a")
+}
+# Loop through each column
+for (cc in 1:length(names(csv_data))) {
+ colname=names(csv_data)[cc]
+  # Collapse all rows in the column into a comma-separated string
+  values <- paste(csv_data[[colname]], collapse = ",")
+  
+  # Write the line to the YAML file
+  writeLines(paste0(colname, ": ", values), con=fileConn )
+}
+
+# Close the file connection
+close(fileConn)
+
+#perform the updating
+
+update_config2("~/config.yaml", "~/dataset.config.yaml", output_path = "~/config.yaml")
+
+fcat("Dataset info has been prepared and written onto config.yaml.\n")
+
 
 ################################################################################
 #actually import the config file and create vectors when needed, so all other 
 #functions have access to the config
 ################################################################################
+fcat("Importing config information...")
 
-config <- yaml::read_yaml(file = 'config.yaml')
+config <- yaml::read_yaml(file = '~/config.yaml')
 
-# modify the line below if the cachedir must be changed on the go
+config$is_reference=as.character(csv_data$dataset_type=="reference") %>% paste(., collapse=",")
+config$is_test=as.character(csv_data$dataset_type=="test")%>% paste(., collapse=",")
+config$is_external=as.character(csv_data$dataset_type=="external") %>% paste(., collapse=",")
+config$dscategory=csv_data$dataset_type %>% paste(., collapse=",")
 
-#config$cachedir<- config$cachedir
-
-setCacheDir(config$cachedir)
 ## transform config variables into vectors based on comma separation  
 dataset.info=config.to.vectors(config)
 
 
+
+################################################################################
+# colors (some colors assigned programmatically)
+################################################################################
+
+write.color.file=function(colorlist, filename="colors"){
+  
+  path=paste0(config$project_root, "/", filename, ".csv")
+
+library(purrr)
+library(readr)
+  
+# convert to tidy data frame
+df <- map_dfr(names(colorlist), function(varname) {
+  tibble(
+    variable = varname,
+    value    = names(colorlist[[varname]]),
+    color    = unname(colorlist[[varname]])
+  )
+})
+
+
+# write to CSV
+write_csv(df, path)
+
+}
+
+
+read.color.file <- function(filename="colors") {
+  path=paste0(config$project_root, "/", filename, ".csv")
+  
+  df <- read_csv(path, show_col_types = FALSE)
+  
+  # check required columns
+  stopifnot(all(c("variable", "value", "color") %in% names(df)))
+  
+  # split by variable and build named vectors
+  nms=unique(df$variable)
+  
+  ilist=lapply(nms, function(x){
+    mdf=df %>% dplyr::filter(variable==!!x)
+  c(mdf$color) %>% givename(., mdf$value)
+    }) %>% givename(., nms)
+  
+    #lapply(l, function(x) 
+    #map(~ set_names(.x$color, .x$value)) %>%
+    #set_names(map_chr(group_keys(df, variable), 1))
+  ilist
+}
+
+
+allcolors=read.color.file()
 
 ################################################################################
 #add current version to a character string
@@ -166,15 +466,12 @@ dataset.info=config.to.vectors(config)
 
 addversion= function(x) paste_(x, "version", analysis.version)
 
-
-addplotpath= function(x) paste0(config$plotpath, x)
+#this comes in handy when we have to recall static analyses from previous versions
+addversion2=function(x) paste_(x, "version", analysis.version2)
 
 ################################################################################
 # Labeling arrays and matrices
 ################################################################################
-
-
-
 
 ################################################################################
 #force a named vector into a matrix
@@ -195,8 +492,6 @@ rr=600
 
 timestamp= function(nm, date.use=NULL)  ifelse(is.null(date.use), paste0(Sys.Date(),"_", nm), paste0(date.use,"_", nm))
 
-
-
 ################################################################################
 # add prefix and suffix to a name vector
 ################################################################################
@@ -212,11 +507,6 @@ addprefix= (function(cc, prefix="C")  paste0(prefix, cc)) %>% Vectorize
 resizetext=function(x) theme_classic(base_size = x)
 
 rotatex= function(x) theme(axis.text.x = element_text(angle = x, hjust=1, vjust=0.5))
-
-
-################################################################################
-# project-specific colors and cell types
-################################################################################
 
 
 ################################################################################
@@ -260,28 +550,6 @@ assignhealth2<- Vectorize(function(x){
 }, USE.NAMES=F)
 
 
-
-assigncelltype<- Vectorize(function(x){
-  out=0
-  if(any(grepl('HSC', x))) return("HSC")
-  if(any(grepl('Erythroblast', x))) {return("Erythroblast"); out=1} 
-  if(any(grepl('Bcell', x))) {return("Bcell") ; out=1}
-  if(any(grepl('LSC', x))) {return("LSC") ; out=1}
-  if(any(grepl('CLP', x))) {return("CLP") ; out=1}
-  if(any(grepl('CMP', x))) {return("CMP") ; out=1}
-  if(any(grepl('Leuk', x))) {return("Leuk") ; out=1}
-  if(any(grepl('CD8', x))) {return("CD8_Tcell") ; out=1}
-  if(any(grepl('CD4', x))) {return("CD4_Tcell") ; out=1}
-  if(any(grepl('Nkcell', x)) || any(grepl('NK', x))) {return("NKcell"); out=1}
-  if(any(grepl('GMP', x))) {return("GMP") ; out=1}
-  if(any(grepl('MPP', x))) {return("MPP") ; out=1}
-  if(any(grepl('MEP', x))) {return("MEP") ; out=1}
-  if(any(grepl('CD34', x))) {return("CD34") ; out=1}
-  if(out==0){
-    return("unlabeled") 
-  }
-}, USE.NAMES=F)
-
 pcadf=function(sc){
   cbind(metadata(sc), Embeddings(sc, reduction="pca"))
 }
@@ -305,8 +573,6 @@ names2col=function(dff, coln="gene") {
   dff[, coln]= rownames(dff) 
   dff
 }
-
-
 
 paste_=function(...) paste(..., sep="_")
 
@@ -337,15 +603,6 @@ showpalette=function(p, pname="generic"){
   return(pl+geom_text(inherit.aes=T,aes(label=name), y=1.1, color="black", angle=90))
 }
 
-
-
-
-#getsourcename<- Vectorize(function(xp) metadata %>% as.data.frame %>% filter(Experiment==xp) %>% pull(source_name), USE.N=F)
-#sranames=lapply(ddsexpts, getsourcename) %>% Reduce(c, .)
-
-#getbioname=Vectorize(function(xp) samplesheet %>% filter(experiment_accession==xp) %>% pull(sample_description), USE.N=F)
-#bionames=lapply(ddsexpts, getbioname) %>% Reduce(c, .)
-#colnames(dds)= editname(colnames(dds))
 
 
 ###########################
@@ -435,11 +692,6 @@ condcbind=function(x,y){
 }
 
 
-
-#recursive function to merge a bunch of clusters at the same time
-# function takes several vectors c(a,b,c...), c(d,e,f)... so that clusters in each vector will be merged together into a single category. 
-#output: a final vector defining new labels for the merged clusters. 
-
 triagecells.multi= function(so, ...){
   grps=list(...)# assemble groups into a list
   
@@ -475,15 +727,12 @@ namestocol=function(df){
 
 paste_=function(...) paste(..., sep="_")
 
-###############
-#open png or pdf with a timestamp (not close)
-###############
-timestamp= function(nm) paste0(Sys.Date(),"_", nm)
+
 
 
 tpng=function(nm,path=config$plotpath,  ...) png(paste0(path, timestamp(nm), ".png"),...)
 
-tpdf=function(nm, path=config$plotpath,pw=2.5, sca=2.5, width=1, height=1, ...) pdf(paste0(path, timestamp(nm), ".pdf"), wi=width*pw*sca, he=height*pw*sca, ...)
+tpdf=function(nm, path=config$plotpath, ...) pdf(paste0(path, timestamp(nm), ".pdf"),...)
 
 #############################################################
 #                   
@@ -531,7 +780,7 @@ renamelabel=function(column, ..., renameto){
 }
 
 
-triagecells.multi2=function(so, groupvar="seurat_clusters", clean=F, ...){
+triagecells.multi2=function(so, groupvar="seurat_clusters", ...){
   #... are the clusters in the group one after the other, ordered arbitrarily and grouped using c() when they are meant to be merged
   # warning: if some cluster groups overlap in any extent, cell indices will appear in two or more occasions and will be sequentially replaced!
   
@@ -547,13 +796,12 @@ triagecells.multi2=function(so, groupvar="seurat_clusters", clean=F, ...){
       vector[indlist[[ind]]]=ind
       return(vector.stamp( vector, ind+1))
     }else{
-      vector[is.na(vector)]= paste_("og", original[is.na(vector)])
+      vector[is.na(vector)]= paste_("original", original[is.na(vector)])
       return(vector) 
     }
   }
   
   out=vector.stamp(final.arr, 1)
-  out
 }
 
 
@@ -718,191 +966,6 @@ seuratprocessing_umap=function(o){
 getpname=function(x) unique(x@meta.data[, "orig.ident"])
 
 
-see.clusterings=function(so){
-  grep("seurat_clusters", colnames(so@meta.data), value=T)
-}
-
-set.clustering=function(so, num=NULL){
-all.clusterings=see.clustrerings(so)
-if(!is.null(num)){
-so@meta.data$seurat_clusters_previous=so@meta.data$seurat_clusters
-so@meta.data= so@meta.data %>% dplyr::mutate(seurat_clusters= !!sym(all.clusterings[num]), current_clustering=all.clusterings[num])
-so
-}else{
-fcat("no clustering performed.")  
-}
-}
-
-
-reset.clustering=function(so,  original=F){
-all.clusterings=see.clustrerings(so)
-
-if("seurat_clusters_previous" %in% all.clusterings){
-so@meta.data$seurat_clusters=so@meta.data$seurat_clusters_previous
-so@meta.data$current_clustering=NULL
-}else{
-  fcat("no previous clustering explicitly registered")
-  if("seurat_clusters_original" %in% all.clusterings && original==T){
-    fcat("resetting to original clustering...")
-so@meta.data$seurat_clusters=so@meta.data$seurat_clusters_original
-}else{
-  fcat("No resetting was performed. You can try setting original=T")
-  fcat("possible changes:")
-  fcat(paste(all.clusterings, collapse=","))
-}}
-  so
-
-}
-
-
-seuratprocessing.sct=function(so,rcache=NULL, verbose=T, umapdims=1:10, vfeatures=2000, label="", reduction.label="", reduction.for.neighbors=NULL, resolution.clusters=0.8, reprocess=F, harmony.vars=NULL, vars.to.regress.sct=NULL){
-  
-    
- if(!is.null(rcache)){
-  simpleCache(rcache, assignToVar="so", reload=T) 
- }
-  
-  so@meta.data$umapdims=paste(umapdims, collapse=";")
- 
-   
-  sctname=paste0("SCT", label)
-  pcaname=paste0("pca", label)
-  umapname=paste0("umap", label, reduction.label)
-  clustername=paste0("seurat_clusters_", label, reduction.label)
-  harmony.reduction=paste_("harmony", pcaname)
-  harmony.umap=paste_(umapname, "harmony") 
- graphname=ifelse(label!="", paste0("SCT_", label), "SCT")
-  
-  Project(so)=label  
-  simpleCache(paste0("processed_dataset_id",label, "_", Project(so), "_",digest::digest(so), "_vfeatures_", vfeatures) %>% addversion, {
-  #if reprocessing is requested or if the assay doesn't exist
-  if(reprocess || !any(grepl(sctname, names(so@assays)))){
-  fcat("running SCTransform...")
-  so=SCTransform(so, verbose=verbose, variable.features.n=vfeatures, new.assay.name=sctname, vars.to.regress=vars.to.regress.sct)
-  fcat("Calculating PCA...")
-  so=RunPCA(so, assay=sctname, verbose=verbose, reduction.name=pcaname )
-   fcat("Calculating UMAP...")
-  so=RunUMAP(so, reduction=pcaname, dims=umapdims, return.model=T, verbose=verbose, reduction.name=umapname )
-  
-      if(!is.null(harmony.vars)){
-    so=RunHarmony(so, verbose=verbose, group.by.vars=harmony.vars, reduction=pcaname, reduction.save=harmony.reduction, assay.use=sctname)
-    so=RunUMAP(so, reduction=harmony.reduction, dims=umapdims, return.model=T, verbose=verbose, reduction.name=harmony.umap)
-    fcat("model is only being returned for the Harmony umap. for a model on a different reduction please use seuratprocessing.sct")
-    if(is.null(reduction.for.neighbors)){
-      fcat("defaulting neighbors reduction to harmony PCA with id", harmony.reduction)
-      reduction.for.neighbors=harmony.reduction
-    }
-    
-  graphname=paste_(graphname, "harmony")
-  }else{
-      
-          if(is.null(reduction.for.neighbors)){
-      fcat("defaulting neighbors reduction to PCA")
-      reduction.for.neighbors="pca"
-    }
-  }
-  
-  }else{
-    
-       if(any(grepl(sctname, names(so@assays)))){
-    
-     fcat("reprocessing aborted: assay", sctname, "already present while reprocess=FALSE. Using existing assays for nn and clustering")
-     
-     
-   }
-    
-       if(any(grepl(paste(pcaname, umapname, sep="|"), names(so@reductions)))){
-    
-     fcat("reprocessing aborted: reductions with label",grepl(sctname, names(so@reductions))  ,"already present while reprocess=FALSE. Using existing assays for nn and clustering")
-     
-       }
-    
-  }
-  
-    ## finish constructing the graph name(s)
-    graphname=paste0(paste_(graphname,reduction.for.neighbors), c("nn","snn"))  
-  #calculate how many dimensions should be used for neeighbors depending on whether the reduction is umap or not
-  if(grepl("umap", reduction.for.neighbors)){neighdims=c(1,2)}else{neighdims=umapdims}
-  
-  so=FindNeighbors(so, verbose=verbose,  dims=neighdims, reduction=reduction.for.neighbors, graph.name=graphname)
-  
-  if("seurat_clusters" %in% colnames(so@meta.data)){
-   
-   if("current_clustering" %in% colnames(so@meta.data)){
-   so@meta.data=so@meta.data %>% dplyr::mutate(previous_clustering=current_clustering) #this is a string
-   so@meta.data=so@meta.data %>% dplyr::mutate(seurat_clusters_previous=seurat_clusters) 
-   
-   }else{
-     so@meta.data=so@meta.data %>% dplyr::mutate(seurat_clusters_original=seurat_clusters) 
-     so@meta.data=so@meta.data %>% dplyr::mutate(previous_clustering="seurat_clusters_original")
-   }
-  }
-  
-  so=FindClusters(so, verbose=verbose, resolution=resolution.clusters, graph.name = graphname[2])
-  so@meta.data=so@meta.data %>% dplyr::mutate(!!sym(paste0("seurat_clusters_on_", reduction.for.neighbors)):=seurat_clusters, current_clustering=paste0("seurat_clusters_on_", reduction.for.neighbors))
-  
-  so
-}, assignToVar="so", reload=T)
- so 
-}
-
-
-seuratprocessing.sct.harmony=function(so,rcache=NULL, verbose=T, umapdims=1:10, vfeatures=2000, label="", reduction.for.neighbors=NULL, group.by.vars=NULL, resolution.clusters=0.8){
-  
-    
- if(!is.null(rcache)){
-  simpleCache(rcache, assignToVar="so", reload=T) 
- }
-  
-  so@meta.data$umapdims=paste(umapdims, collapse=";")
- simpleCache(paste0("processed_dataset_id",label, "_", Project(so), "_",digest::digest(so), "_vfeatures_", vfeatures) %>% addversion, {
-   
-  sctname=paste0("SCT", label)
-  pcaname=paste0("pca", label)
-  umapname=paste0("umap", label)
-  graphname=paste0(ifelse(label!="", paste0("SCT_", label), "SCT"), c("_nn","_snn"))
-  clustername=paste0("seurat_clusters_", label)
-  
-   so=SCTransform(so, verbose=verbose, variable.features.n=vfeatures, new.assay.name=sctname)
-
-  so=RunPCA(so, assay=sctname, verbose=verbose, reduction.name=pcaname )
-  
-  if(!is.null(group.by.vars)){
-    so=RunHarmony(so, verbose=verbose, group.by.vars=group.by.vars, reduction=pcaname, reduction.save=paste_("harmony", pcaname), assay.use=sctname )
-    so=RunUMAP(so, reduction=paste_("harmony", pcaname), dims=umapdims, return.model=T, verbose=verbose, reduction.name=paste_(umapname, "harmony") )
-    fcat("model is only being returned for the Harmony umap. for a model on a different reduction please use seuratprocessing.sct")
-    if(is.null(reduction.for.neighbors)){
-      fcat("defaulting neighbors reduction to harmony PCA with id", paste_("harmony", pcaname))
-      reduction.for.neighbors=paste_("harmony", pcaname)
-    }
-    
-  graphname=paste_(graphname, "harmony")
-  }
-  
-  so=RunUMAP(so, reduction=pcaname, dims=umapdims, return.model=F, verbose=verbose, reduction.name=umapname )
-  
-  #calculate how many dimensions should be used for neeighbors depending on whether the reduction is umap or not
-  if(grepl("umap", reduction.for.neighbors)){neighdims=c(1,2)}else{neighdims=umapdims}
-  
-  so=FindNeighbors(so, verbose=verbose,  dims=neighdims, reduction=reduction.for.neighbors, graph.name=graphname)
-  
-  if(any(grepl("seurat_clusters", colnames(so@meta.data)))){
-    
-    num=grepl("seurat_clusters", colnames(so@meta.data)) %>% sum
-    
-   so@meta.data=so@meta.data %>% dplyr::mutate(!!sym(paste_("seurat_clusters_original", num+1)):=seurat_clusters) 
-  }
-  
-  so=FindClusters(so, verbose=verbose, resolution=resolution.clusters, graph.name = graphname[2])
-  so
-}, assignToVar="so", reload=T)
- so 
-}
-
-
-
-
-
 seuratprocessing_markers1=function(so, verbose=F, umapdims=30, mincpm=3, minfc=1, fdr=0.05, selecttop=5, vfeatures=2000){
   so=SCTransform(so, verbose=verbose, variable.features.n=vfeatures)
   so=RunPCA(so, verbose=verbose)
@@ -937,14 +1000,7 @@ seuratprocessing_markers1=function(so, verbose=F, umapdims=30, mincpm=3, minfc=1
 }
 
 
-seuratprocessing.markers2=function(so, verbose=T, method="deseq", group_column="seurat_clusters", replicate_column=NULL, padj=0.05, minfc=0.5,selecttop=NULL,minrate=0.5, fullreload=T, fullrecreate=F, getresidual=F, min.cells.per.group=3, vfeatures=2000){
-  
-  
-  so=SCTransform(so, verbose=verbose, variable.features.n=vfeatures)
-  so=RunPCA(so, verbose=verbose)
-  so=FindNeighbors(so, verbose=verbose)
-  so=FindClusters(so, verbose=verbose)
-  
+seuratmarkers.delegate=function(so, method="deseq", group_column="seurat_clusters", replicate_column=NULL, padj=0.05, minfc=0.5,selecttop=NULL,minrate=0.5, fullreload=T, fullrecreate=F, getresidual=F, min.cells.per.group=3){
   fcat(paste0("finding markers using the DElegate package...\n") ) 
   #simpleCache(paste_("markers_DElegate_seuratproject",Project(so), "on_groups_of", group_column, "splitbyreps", replicate_column, "method", method), {
   
@@ -997,132 +1053,6 @@ seuratprocessing.markers2=function(so, verbose=T, method="deseq", group_column="
   }
   so
 }
-
-
-
-
-
-
-seuratmarkers.delegate=function(so, rcache=NULL, method="deseq", group_column="seurat_clusters", slot=group_column, replicate_column=NULL, padj=0.05, minfc=0.5,selecttop=NULL,minrate=0.5, getresidual=T, min.cells.per.group=10, label="", verbosity=1){
-  fcat(paste0("finding markers using the DElegate package...\n")) 
- if(!is.null(rcache)){
-  simpleCache(rcache, assignToVar="so", reload=T) 
- }
-  
- misc.object=so$RNA@misc 
- so$RNA@misc=list()
- 
-  so.digest=digest::digest(so)
-  
-  fulldigest=digest::digest(package.vars(so.digest, method, replicate_column, group_column,padj, minfc,selecttop, minrate,getresidual, min.cells.per.group))
-  
-  simpleCache(paste0("markers_DElegate_so_id_", label, "_", so.digest,"_analysis_", fulldigest, "_groupby_", group_column, "_reps_", replicate_column, "_method_", method) %>% addversion, {
-  
-  #function (object, meta_data = NULL, group_column = NULL, replicate_column = NULL, 
-  #method = "edger", min_rate = 0.05, min_fc = 1, lfc_shrinkage = NULL, 
-  #verbosity = 1)   
-  if(min.cells.per.group){
-    
-    countstab=so %>% metadata %>% group_by(!!sym(group_column)) %>% summarise(counts=n()) %>% as.data.frame
-    
-    goodcats=countstab[ countstab$counts>=min.cells.per.group, group_column]
-    fcat("enough cells found for", paste(goodcats, collapse=","))
-    
-    so = so[, (metadata(so) %>% filter(!!sym(group_column) %in% goodcats) %>% rownames)]
-    
-  }
-  
-  
-  m<<- DElegate::FindAllMarkers2(object=so, group_column=group_column, replicate_column=replicate_column, method=method, min_rate=minrate, min_fc=0.1, verbosity=verbosity)
-  m
-  #m=cb_pos_markers(scwt@assays$RNA@counts, grouping=sma %>% metadata %>% pull() )
-  }, assignToVar="m", reload=T)
-  m<<-m
-  #print(m)
-  
-  ## arrange and filter top markers.
-  ## currently filtering such that the minimum rate for in group cells is at least minrate. 
-  pa=padj
-  mi=minfc
-  
-  mp=m %>% group_split(group1) %>% lapply(., function(x) x %>% filter(log_fc>=minfc, padj<=0.05, rate1>=minrate) %>% arrange(-log_fc)) %>% Reduce(rbind,. )
-  mb=m %>% group_split(group1) %>% lapply(., function(x) x %>% filter(log_fc<=-minfc, padj<=0.05) %>% arrange(log_fc)) %>% Reduce(rbind,. )
-
-  
-  
-  
-  cat("Number of filtered markers: ", nrow(mp), "(", (nrow(mp)/nrow(m))*100, "% markers post filtering)\n")
-  so[["RNA"]]@misc=misc.object
-  so[["RNA"]]@misc[[slot]]$markers <- m
-  so[["RNA"]]@misc[[slot]]$top_markers <- mp
-  so[["RNA"]]@misc[[slot]]$negative_markers <- mb
-  if(getresidual){
-    so <- GetResidual(so, features = so[["RNA"]]@misc[[slot]]$markers, verbose = F)
-  }
-  so
-}
-
-
-seuratmarkers.roc=function(so, rcache=NULL, group_column="seurat_clusters", slot=group_column, replicate_column=NULL, padj=0.05, minfc=0.5,selecttop=NULL,minrate=0.5, getresidual=F, min.cells.per.group=10, label="", column.names.delegate=T){
-  
-  method="roc"
-  fcat(paste0("finding markers using the Seurat package (roc method)...\n")) 
- if(!is.null(rcache)){
-  simpleCache(rcache, assignToVar="so", reload=T) 
- }
- 
- misc.object=so$RNA@misc 
- so$RNA@misc=list()
-  so.digest=digest::digest(so)
-  
-  fulldigest=digest::digest(package.vars(so.digest, method, replicate_column, group_column,padj, minfc,selecttop, minrate,getresidual, min.cells.per.group))
-  
-  simpleCache(paste0("markers_seuratroc_so_id_", label, "_",fulldigest, "_groupby_", group_column, "_method_", method) %>% addversion, {
-  
-  #function (object, meta_data = NULL, group_column = NULL, replicate_column = NULL, 
-  #method = "edger", min_rate = 0.05, min_fc = 1, lfc_shrinkage = NULL, 
-  #verbosity = 1)   
-  if(min.cells.per.group){
-    
-    countstab=so %>% metadata %>% group_by(!!sym(group_column)) %>% summarise(counts=n()) %>% as.data.frame
-    
-    goodcats=countstab[ countstab$counts>=min.cells.per.group, group_column]
-    fcat("enough cells found for", paste(goodcats, collapse=","))
-    
-    so = so[, (metadata(so) %>% filter(!!sym(group_column) %in% goodcats) %>% rownames)]
-    
-  }
-  
-  Idents(so)=group_column
-  m<<- Seurat::FindAllMarkers(object=so, test.use="roc")
-  m 
-
-  #>                 p_val avg_log2FC pct.1 pct.2    p_val_adj cluster     gene
-  }, assignToVar="m", reload=T)
-  m<<-m
-
-
- ###adding variables from the delegate tables
-   m= m %>% dplyr::mutate( log_fc=avg_log2FC, rate1=pct.1, rate2=pct.2, group1=cluster,  feature=gene) 
-    
-
-  m=m %>% dplyr::mutate(pct.ratio=rate1/rate2) %>% arrange(group1, -pct.ratio)
-  mp=m %>% group_split(group1) %>% lapply(., function(x) x %>% filter(log_fc>=minfc, padj<=0.05) %>% arrange(-pct.ratio)) %>% Reduce(rbind,. ) %>% as.data.frame
-  mb=m %>% group_split(group1) %>% lapply(., function(x) x %>% filter(log_fc<=-minfc, padj<=0.05) %>% arrange(pct.ratio)) %>% Reduce(rbind,. ) %>% as.data.frame
-
-  
-  
-  cat("Number of filtered markers: ", nrow(mp), "(", (nrow(mp)/nrow(m))*100, "% markers post filtering)\n")
-  so[["RNA"]]@misc=misc.object
-  so[["RNA"]]@misc[[slot]]$markers_roc <- m
-  so[["RNA"]]@misc[[slot]]$top_markers_roc <- mp
-  so[["RNA"]]@misc[[slot]]$negative_markers_roc <- mb
-  if(getresidual){
-    so <- GetResidual(so, features = so$RNA@misc[[slot]]$top_markers$feature, verbose = F)
-  }
-  so
-}
-
 
 
 
@@ -1285,20 +1215,7 @@ simple_roc <- function(labels, scores){
 
 
 ############Quality Ccontrol QC plots function
-
-add.mito= function(so){ 
-  # for old seurat
-percent.mt<- PercentageFeatureSet(so, pattern = "^MT-") %>%givecolnames(., nms="percent.mt")  
-# for new seurat  
-#percent.mt<- PercentageFeatureSet(so, pattern = "^MT-") %>% coerce.vector.to.matrix %>% givecolnames(., nms="percent.mt")
-so<- AddMetaData(so, metadata=percent.mt)
-so
-}  
-
-logvarname= function(x) paste0("log10_", x)
-
-
-
+logvarname= function(x) paste0("log10_")
 
 
 qcplots=function(so, 
@@ -1318,39 +1235,33 @@ qcplots=function(so,
                  cutoffs=NULL, 
                  cellnumbers=NULL, 
                  seriate.method=NULL,
-                 seriate.pars=list(ncells=500,nmarkers=NULL),
                  plot.empty=NULL, 
                  groupvar="group1",
-                 lfcvar="log_fc", 
-                 nmarkers.heatmap=20){
-
-so<- add.mito(so)
-
-Idents(so)=colorby  
-
-   markers= so@assays$RNA@misc$top_markers
-   
-   if(is.null(markers)){
+                 lfcvar="log_fc"){
+  
+  Idents(so)=colorby  
+  
+  markers= so@assays$RNA@misc$top_markers
+  
+  if(is.null(markers)){
     fcat("There are no markers! please add markers under @assays$RNA@misc$top_markers" )
-     
-     
-     
-   cells=NULL
-     }else{
-if(is.null(seriate.method)){            
-cells <- cellinfo.init(so, seriate=F)
-}else{
-cells<<-seriatecells(so, clusvar=colorby, meth=seriate.method, groupvarname=groupvar, lfcvarname = lfcvar, ncells=seriate.pars$ncells, nmarkers=seriate.pars$nmarkers)
-
-
-}
-     }   
+    
+    
+    
+    cells=NULL
+  }else{
+    if(is.null(seriate.method)){            
+      cells <- WhichCells(so, downsample = 100)
+    }else{
+      cells= seriatecells(so, clusvar=colorby, meth=seriate.method, groupvarname=groupvar, lfcvarname = lfcvar)
+    }
+  }   
   
   
-if(is.null(plot.title)){
-  plot.title=Project(so)
+  if(is.null(plot.title)){
+    plot.title=Project(so)
   }
-
+  
   
   require(scales)
   tsz=7
@@ -1358,100 +1269,100 @@ if(is.null(plot.title)){
   
   so$log10_nCount_RNA <- log10(so$nCount_RNA)
   so$log10_nFeature_RNA <- log10(so$nFeature_RNA)
-
-qc1=ggplot(so@meta.data, aes(x=nCount_RNA))+
-  geom_histogram(binwidth=20, alpha=0.5)+
-  labs(x = "Read depth",y = "Frequency")+
-  guides(fill=guide_legend())+
-  coord_cartesian(xlim=c(0, topf))+
-  scale_y_continuous(labels = nott)+
-  scale_x_continuous(labels = nott)+
-  theme_classic()+
-  labs(title="Reads per barcode")+theme_classic()+theme(axis.text=element_text(size=tsz), axis.title=element_text(size=tsz));
-
-#distribution of counts per barcode
-qc2=ggplot(so@meta.data, aes(x=nFeature_RNA))+
-  labs(x = "Num. Genes",y = "Frequency")+
-  geom_histogram(binwidth=20, alpha=0.5)+
-  labs(title="Genes per barcode")+
-  scale_y_continuous(labels = nott)+
-  scale_x_continuous(labels = nott)+
-theme_classic()+
-coord_cartesian(xlim=c(0, topx))+theme_classic()+theme(axis.text=element_text(size=tsz), axis.title=element_text(size=tsz));
-
-
-if(!(colorby %in% names(allcolors)) || allcolors[[colorby]] %>% length != so %>% metadata %>% pull(!!sym(colorby)) %>% unique %>% length){
   
-  cats=so %>% metadata %>% pull(!!sym(colorby)) %>% unique
-  allcolors[[colorby]]=  randomcolors(cats %>% length)
-  names(allcolors[[colorby]])= cats
-}
-
-qc3 <- FeatureScatter(so, group.by=colorby, feature1 = "nFeature_RNA", feature2 = "percent.mt", raster=T)+
-  scale_color_manual(values=allcolors[[colorby]])+
-  labs(x = "Num. Genes",y = "% Mitochondrial")+
-  ggtitle("")+theme_classic()+
-  scale_x_continuous(labels = scientific)+
-  theme(axis.text.x=element_text(size=tsz), axis.text.y=element_text(size=tsz),axis.title=element_text(size=tsz))+NoLegend()
-qc4 <- FeatureScatter(so, group.by=colorby,feature1 = "nCount_RNA", feature2 = "nFeature_RNA", raster=T)+
-  scale_color_manual(values=allcolors[[colorby]])+
-  labs(x = "Read depth",y = "Num.Genes")+
-  ggtitle("")+
-  scale_y_continuous(labels = nott)+
-  scale_x_continuous(labels = nott)+
-  theme_classic()+
-  theme(axis.text.x=element_text(size=tsz), axis.text.y=element_text(size=tsz), axis.title=element_text(size=tsz),legend.position="top",legend.title=element_blank())
-qc5 <- FeatureScatter(so, group.by=colorby,feature1 = "nCount_RNA", feature2 = "percent.mt", raster=T)+
-  scale_color_manual(values=allcolors[[colorby]])+
-  labs(x = "Read depth",y ="% Mitochondrial")+
-  ggtitle("")+theme_classic()+
-  scale_x_continuous(labels = scientific)+
-  theme(axis.text.x=element_text(size=tsz), axis.text.y=element_text(size=tsz), axis.title=element_text(size=tsz))+NoLegend()  
-
-
-if(plotred!=FALSE){
-
-  dms=10 
-     umap1=DimPlot(so, group.by = colorby, reduction=plotred, label=T, label.size=6, label.color="black", cols= allcolors[[colorby]], raster=T)+
-     ggtitle(paste0(plot.title, ": ", plotred, "\n", ncol(so), " cells"))+NoAxes()+NoLegend()#+NoLegend()#+scale_color_manual( values=qccols);tsne1 
-
-   umapmt=FeaturePlot(so, feature="percent.mt", reduction=plotred, raster=T)+
-     ggtitle("% Mitochondrial")+NoAxes()#+NoLegend()#+scale_color_manual( values=qccols);tsne1 
-   
-      umapreads=FeaturePlot(so,  feature="nCount_RNA",reduction=plotred, raster=T)+
-     ggtitle("Reads/BC")+NoAxes()#+NoLegend()#+scale_color_manual( values=qccols);tsne1 
+  qc1=ggplot(so@meta.data, aes(x=nCount_RNA))+
+    geom_histogram(binwidth=20, alpha=0.5)+
+    labs(x = "Read depth",y = "Frequency")+
+    guides(fill=guide_legend())+
+    coord_cartesian(xlim=c(0, topf))+
+    scale_y_continuous(labels = nott)+
+    scale_x_continuous(labels = nott)+
+    theme_classic()+
+    labs(title="Reads per barcode")+theme_classic()+theme(axis.text=element_text(size=tsz), axis.title=element_text(size=tsz));
+  
+  #distribution of counts per barcode
+  qc2=ggplot(so@meta.data, aes(x=nFeature_RNA))+
+    labs(x = "Num. Genes",y = "Frequency")+
+    geom_histogram(binwidth=20, alpha=0.5)+
+    labs(title="Genes per barcode")+
+    scale_y_continuous(labels = nott)+
+    scale_x_continuous(labels = nott)+
+    theme_classic()+
+    coord_cartesian(xlim=c(0, topx))+theme_classic()+theme(axis.text=element_text(size=tsz), axis.title=element_text(size=tsz));
+  
+  
+  if(!(colorby %in% names(allcolors)) || allcolors[[colorby]] %>% length != so %>% metadata %>% pull(!!sym(colorby)) %>% unique %>% length){
+    
+    cats=so %>% metadata %>% pull(!!sym(colorby)) %>% unique
+    allcolors[[colorby]]=  randomcolors(cats %>% length)
+    names(allcolors[[colorby]])= cats
+  }
+  
+  qc3 <- FeatureScatter(so, group.by=colorby, feature1 = "nFeature_RNA", feature2 = "percent.mt", raster=T)+
+    scale_color_manual(values=allcolors[[colorby]])+
+    labs(x = "Num. Genes",y = "% Mitochondrial")+
+    ggtitle("")+theme_classic()+
+    scale_x_continuous(labels = scientific)+
+    theme(axis.text.x=element_text(size=tsz), axis.text.y=element_text(size=tsz),axis.title=element_text(size=tsz))+NoLegend()
+  qc4 <- FeatureScatter(so, group.by=colorby,feature1 = "nCount_RNA", feature2 = "nFeature_RNA", raster=T)+
+    scale_color_manual(values=allcolors[[colorby]])+
+    labs(x = "Read depth",y = "Num.Genes")+
+    ggtitle("")+
+    scale_y_continuous(labels = nott)+
+    scale_x_continuous(labels = nott)+
+    theme_classic()+
+    theme(axis.text.x=element_text(size=tsz), axis.text.y=element_text(size=tsz), axis.title=element_text(size=tsz),legend.position="top",legend.title=element_blank())
+  qc5 <- FeatureScatter(so, group.by=colorby,feature1 = "nCount_RNA", feature2 = "percent.mt", raster=T)+
+    scale_color_manual(values=allcolors[[colorby]])+
+    labs(x = "Read depth",y ="% Mitochondrial")+
+    ggtitle("")+theme_classic()+
+    scale_x_continuous(labels = scientific)+
+    theme(axis.text.x=element_text(size=tsz), axis.text.y=element_text(size=tsz), axis.title=element_text(size=tsz))+NoLegend()  
+  
+  
+  if(plotred!=FALSE){
+    
+    dms=10 
+    umap1=DimPlot(so, group.by = colorby, reduction=plotred, label=T, label.size=6, label.color="black", cols= allcolors[[colorby]], raster=T)+
+      ggtitle(paste0(plot.title, ": ", plotred, "\n", ncol(so), " cells"))+NoAxes()#+NoLegend()#+scale_color_manual( values=qccols);tsne1 
+    
+    umapmt=FeaturePlot(so, feature="percent.mt", reduction=plotred, raster=T)+
+      ggtitle("% Mitochondrial")+NoAxes()#+NoLegend()#+scale_color_manual( values=qccols);tsne1 
+    
+    umapreads=FeaturePlot(so,  feature="nCount_RNA",reduction=plotred, raster=T)+
+      ggtitle("Reads/BC")+NoAxes()#+NoLegend()#+scale_color_manual( values=qccols);tsne1 
+    
+    umapgenes=FeaturePlot(so,feature="nFeature_RNA",  reduction=plotred, raster=T)+
+      ggtitle("Genes/BC")+NoAxes()#+NoLegend()#+scale_color_manual( values=qccols);tsne1 
+    
+    vlnreads= ggplot(so %>% metadata, aes(x=factor(!!sym(colorby)), fill=factor(!!sym(colorby)), y=nCount_RNA))+geom_violin()+scale_y_continuous(trans='log10')+scale_fill_manual(values=allcolors[[colorby]])+theme_classic()+NoLegend()
+    vlngenes= ggplot(so %>% metadata, aes(x=factor(!!sym(colorby)), fill=factor(!!sym(colorby)), y=nFeature_RNA))+geom_violin()+scale_fill_manual(values=allcolors[[colorby]])+theme_classic()+NoLegend()
+    vlnmt= ggplot(so %>% metadata, aes(x=factor(!!sym(colorby)), fill=factor(!!sym(colorby)), y=percent.mt))+scale_fill_manual(values=allcolors[[colorby]])+geom_violin()+theme_classic()+NoLegend()
+    
+    
+    if( !is.null(cutoffs)){
+      lcolor="red"
+      vlnreads= vlnreads+geom_hline(yintercept= cutoffs$counts, color=lcolor)
+      vlngenes= vlngenes+geom_hline(yintercept= cutoffs$features, color=lcolor)
+      vlnmt= vlnmt+geom_hline(yintercept= cutoffs$mito, color=lcolor)
+    }
+    
+    if( !is.null(cellnumbers)){
+      ncolor="black"
+      sumdata= so %>% metadata %>% group_by(seurat_clusters) %>% summarise(counts=n(), nCount_RNA=median(nCount_RNA), nFeature_RNA=median(nFeature_RNA), percent.mt=median(percent.mt))
       
-            umapgenes=FeaturePlot(so,feature="nFeature_RNA",  reduction=plotred, raster=T)+
-     ggtitle("Genes/BC")+NoAxes()#+NoLegend()#+scale_color_manual( values=qccols);tsne1 
-            
-            vlnreads= ggplot(so %>% metadata, aes(x=factor(!!sym(colorby)), fill=factor(!!sym(colorby)), y=nCount_RNA))+geom_violin()+scale_y_continuous(trans='log10')+scale_fill_manual(values=allcolors[[colorby]])+theme_classic()+NoLegend()
-            vlngenes= ggplot(so %>% metadata, aes(x=factor(!!sym(colorby)), fill=factor(!!sym(colorby)), y=nFeature_RNA))+geom_violin()+scale_fill_manual(values=allcolors[[colorby]])+theme_classic()+NoLegend()
-            vlnmt= ggplot(so %>% metadata, aes(x=factor(!!sym(colorby)), fill=factor(!!sym(colorby)), y=percent.mt))+scale_fill_manual(values=allcolors[[colorby]])+geom_violin()+theme_classic()+NoLegend()
-            
-            
-            if( !is.null(cutoffs)){
-              lcolor="red"
-             vlnreads= vlnreads+geom_hline(yintercept= cutoffs$counts, color=lcolor)
-             vlngenes= vlngenes+geom_hline(yintercept= cutoffs$features, color=lcolor)
-             vlnmt= vlnmt+geom_hline(yintercept= cutoffs$mito, color=lcolor)
-            }
-            
-             if( !is.null(cellnumbers)){
-            ncolor="black"
-               sumdata= so %>% metadata %>% group_by(seurat_clusters) %>% summarise(counts=n(), nCount_RNA=median(nCount_RNA), nFeature_RNA=median(nFeature_RNA), percent.mt=median(percent.mt))
-                  
-             vlnreads= vlnreads+geom_text(data=sumdata, aes( label=paste0("n=",counts)), angle=90, col=ncolor)
-             vlngenes= vlngenes+geom_text(data=sumdata, aes( label=paste0("n=",counts)), angle=90, col=ncolor)
-             vlnmt= vlnmt+geom_text(data=sumdata, aes( label=paste0("n=",counts)), angle=90, col=ncolor)
-            }
-            
-      if(!is.null(demux) && !is.null(so$RNA@misc$top_markers)){
-        
+      vlnreads= vlnreads+geom_text(data=sumdata, aes( label=paste0("n=",counts)), angle=90, col=ncolor)
+      vlngenes= vlngenes+geom_text(data=sumdata, aes( label=paste0("n=",counts)), angle=90, col=ncolor)
+      vlnmt= vlnmt+geom_text(data=sumdata, aes( label=paste0("n=",counts)), angle=90, col=ncolor)
+    }
+    
+    if(!is.null(demux) && !is.null(so$RNA@misc$top_markers)){
+      
       demuxplot=ggplot(so %>% metadata, aes(x=seurat_clusters))+geom_bar(aes(fill=!!sym(demux)), position="fill")+theme_classic()
       
-            
-            
-             layout="AAAAMMMMM
+      
+      
+      layout="AAAAMMMMM
              AAAALLLLL
                     AAAALLLLL
                     AAAALLLLL
@@ -1464,72 +1375,70 @@ if(plotred!=FALSE){
                     GGDDKKKKK
                     "
       
-
+      
+      
+      fcat("Preparing heatmap...")
+      
+      #if(!is.null(plot.empty)){
+      # emptydropsplot=ggplot(so %>% metadata[cells, ] %>% dplyr::mutate(ord=1:length(cells)), aes(x=ord, y=1, fill=isemptydroplet))+geom_bar(color=NA)
+      #}else{
+      #emptydropsplot=ggplot(so %>% metadata[cells, ] %>% dplyr::mutate(ord=1:length(cells)), aes(x=ord, y=1, fill=isemptydroplet))+geom_bar(color=NA)
+      #}             
+      
+      
+      
+      ph <- DoHeatmap(so, features = so$RNA@misc$top_markers$feature, group.colors=allcolors[[colorby]], slot = "scale.data", cells = cells) + NoLegend()
+      
+      
+      
+      
+      qc_assembly=wrap_plots(A = umap1, B = qc3, C = qc4,
+                             D = qc5, E = umapmt, F=umapreads, G=umapgenes, I=vlnmt, J=vlnreads, K=vlngenes, L=ph,M=demuxplot,
+                             design = layout)
+    }else{
+      
+      
+      qc_assembly=((umap1)/(qc3+qc4+qc5))|(umapmt+umapreads+umapgenes)|(vlnmt+vlnreads+vlngenes)#/(qc6+qc7+qc8)
+    }
+    ###################
+    #plotting with tsne  
+    ###################
+    tpng(plotname, path=path, width=w*plotsize*ww, height=w*plotsize*hh, res=600)
+    print(qc_assembly)
+    dev.off()
     
-fcat("Preparing heatmap...")
-
-#if(!is.null(plot.empty)){
- # emptydropsplot=ggplot(so %>% metadata[cells, ] %>% mutate(ord=1:length(cells)), aes(x=ord, y=1, fill=isemptydroplet))+geom_bar(color=NA)
-#}else{
-#emptydropsplot=ggplot(so %>% metadata[cells, ] %>% mutate(ord=1:length(cells)), aes(x=ord, y=1, fill=isemptydroplet))+geom_bar(color=NA)
-#}             
-             
- cat("checkpoint5...\n")                       
-
-ph <- DoHeatmap(so, features = adjust.markers(cells, nmarkers.heatmap)$markers, group.colors=allcolors[[colorby]], slot = "scale.data", cells = cells$cells) + NoLegend()
-
-
-    
-    
-    qc_assembly=wrap_plots(A = umap1, B = qc3, C = qc4,
-                  D = qc5, E = umapmt, F=umapreads, G=umapgenes, I=vlnmt, J=vlnreads, K=vlngenes, L=ph,M=demuxplot,
-                   design = layout)
   }else{
-
     
-  qc_assembly=((umap1)/(qc3+qc4+qc5))|(umapmt+umapreads+umapgenes)|(vlnmt/(vlnreads/vlngenes))#/(qc6+qc7+qc8)
-}
-###################
-#plotting with tsne  
-###################
-tpng(plotname, path=path, width=w*plotsize*ww, height=w*plotsize*hh, res=600)
-print(qc_assembly)
-dev.off()
-
-}else{
-
-#ppc1=DimPlot(object = subset(so, subset = percent.mt<10), cols= c("grey", "blue"), reduction = "pca");
-###################
-#plotting without tsne  
-###################
-  
-layout <- "
+    #ppc1=DimPlot(object = subset(so, subset = percent.mt<10), cols= c("grey", "blue"), reduction = "pca");
+    ###################
+    #plotting without tsne  
+    ###################
+    
+    layout <- "
 ####NN
 AABBNN
 AABBNN
 CCDDEE
 CCDDEE
 "
-  qc_assembly=wrap_plots(A = qc1, qc2 = qc2, C = qc3, D=qc4+NoLegend(), E=qc5, N=qc4,  design = layout)
-  
-
-png.pdf.prop=12
-if(format=="png"){
-tpng(plotname, path=path, width=w*plotsize*ww/png.pdf.prop, height=w*plotsize*hh/png.pdf.prop, res=600)
-print(qc_assembly)
-dev.off()
+    qc_assembly=wrap_plots(A = qc1, qc2 = qc2, C = qc3, D=qc4+NoLegend(), E=qc5, N=qc4,  design = layout)
+    
+    
+    png.pdf.prop=12
+    if(format=="png"){
+      tpng(plotname, path=path, width=w*plotsize*ww/png.pdf.prop, height=w*plotsize*hh/png.pdf.prop, res=600)
+      print(qc_assembly)
+      dev.off()
+    }
+    if(format=="pdf"){
+      tpdf(plotname, path=path, width=pw*plotsize*ww/png.pdf.prop, height=pw*plotsize*hh/png.pdf.prop)
+      print(qc_assembly)
+      dev.off()
+    }
+    
+  }
+  list(plot=qc_assembly, cells=cells)
 }
-if(format=="pdf"){
-  tpdf(plotname, path=path, width=pw*plotsize*ww/png.pdf.prop, height=pw*plotsize*hh/png.pdf.prop)
-  print(qc_assembly)
-  dev.off()
-}
-
-}
-list(plot=qc_assembly, cells=cells)
-}
-
-
 
 
 os <- function() {
@@ -1640,9 +1549,8 @@ topnclustmembers=function(phe, top=3){
 ###############################################################
 
 getheatmapcolors=function(ph, var, orientation='top_annotation'){
-  base::eval(glue::glue("ph@{orientation}@anno_list${var}@color_mapping@colors"))
-  #ph@{orientation}@anno_list${var}@color_mapping@colors
-  }
+  base::eval(glue::glue("pha@{orientation}@anno_list${var}@color_mapping@colors"))
+  colls}
 
 #####################################################################
 
@@ -1690,23 +1598,6 @@ showpalette=function(p, pname="generic"){
 #GGUMAP wrapper  and derivatives
 ##################################################################################
 
-adjust.seurat.colors=function(so){
- if("seurat_clusters" %in% colnames(so@meta.data)){
-   num=length(so@meta.data$seurat_clusters %>%  unique)
-   #spectral
-   #return(colorRampPalette(RColorBrewer::brewer.pal(20, "Spectral"), space="rgb")(num) %>% givename(., 0:(length(num)-1)))
-   #rainbow
-   return(rainbow(num) %>% givename(., 0:(num-1)))
- }else{
-   
-   return(colorRampPalette(RColorBrewer::brewer.pal(20, "Spectral"), space="rgb")(25))
- }
-  
-}
-
-
-
-
 ggumap=function(so, umap.df=NULL, colorby="seurat_clusters", labelby="seurat_clusters", sz=0.02, ssca=300, colorlist=NULL, reductions=c("umap"), reduction.key="UMAP_", legend.size=3, color.labels.by="defaultcolor"){
   require(ggrepel)
   require(ggrastr)
@@ -1752,49 +1643,48 @@ ggumap=function(so, umap.df=NULL, colorby="seurat_clusters", labelby="seurat_clu
   colorlist[[color.labels.by]]=c(colorlist[[color.labels.by]] )
   colorlist[[colorby]]=c(colorlist[[colorby]] )
   if(colorby=="seurat_clusters"){
-  colorlist[["seurat_clusters"]]=adjust.seurat.colors(so)
+    colorlist[["seurat_clusters"]]=adjust.seurat.colors(so)
   }
   ##############################################################################
   # constructing plot
   ##############################################################################
   
- 
+  
   
   dat2=dat %>% group_by(!!sym(labelby)) %>% summarise(UMAP_1=jitter(mean(UMAP_1)), UMAP_2=jitter(mean(UMAP_2)), defaultcolor="one")
   #catch some pesky history dependent bug with geom_point_rast
   
   gpuc<- tryCatch(
-  {
-    # First try with geom_point_rast
-   print(ggplot(dat, aes(x=UMAP_1, y=UMAP_2, label=!!sym(labelby)))+
-    geom_point_rast(size=sz, aes(color=!!sym(colorby)))+
-    scale_color_manual(values=colorlist[[colorby]], guide = guide_legend(override.aes = list(size = legend.size, shape=15) ))+
-    theme_classic()+
-    geom_text(data= dat2,  color="black", size=sz*ssca))
-    
-    ggplot(dat, aes(x=UMAP_1, y=UMAP_2, label=!!sym(labelby)))+
-    geom_point_rast(size=sz, aes(color=!!sym(colorby)))+
-    scale_color_manual(values=colorlist[[colorby]], guide = guide_legend(override.aes = list(size = legend.size, shape=15) ))+
-    theme_classic()+
-    geom_text(data= dat2,  color="black", size=sz*ssca)
-  },
-  error = function(e) {
-    if (grepl("Empty raster", e$message)) {
-      message("geom_point_rast failed (Empty raster). Falling back to geom_point().")
+    {
+      # First try with geom_point_rast
+      print(ggplot(dat, aes(x=UMAP_1, y=UMAP_2, label=!!sym(labelby)))+
+              geom_point_rast(size=sz, aes(color=!!sym(colorby)))+
+              scale_color_manual(values=colorlist[[colorby]], guide = guide_legend(override.aes = list(size = legend.size, shape=15) ))+
+              theme_classic()+
+              geom_text(data= dat2,  color="black", size=sz*ssca))
+      
+      ggplot(dat, aes(x=UMAP_1, y=UMAP_2, label=!!sym(labelby)))+
+        geom_point_rast(size=sz, aes(color=!!sym(colorby)))+
+        scale_color_manual(values=colorlist[[colorby]], guide = guide_legend(override.aes = list(size = legend.size, shape=15) ))+
+        theme_classic()+
+        geom_text(data= dat2,  color="black", size=sz*ssca)
+    },
+    error = function(e) {
+      if (grepl("Empty raster", e$message)) {
+        message("geom_point_rast failed (Empty raster). Falling back to geom_point().")
         ggplot(dat, aes(x=UMAP_1, y=UMAP_2, label=!!sym(labelby)))+
-    geom_point(size=sz, aes(color=!!sym(colorby)))+
-    scale_color_manual(values=colorlist[[colorby]], guide = guide_legend(override.aes = list(size = legend.size, shape=15) ))+
-    theme_classic()+
-    geom_text(data= dat2,  color="black", size=sz*ssca)
-    } else {
-      stop(e) # rethrow unexpected errors
+          geom_point(size=sz, aes(color=!!sym(colorby)))+
+          scale_color_manual(values=colorlist[[colorby]], guide = guide_legend(override.aes = list(size = legend.size, shape=15) ))+
+          theme_classic()+
+          geom_text(data= dat2,  color="black", size=sz*ssca)
+      } else {
+        stop(e) # rethrow unexpected errors
+      }
     }
-  }
-)
-
-    
+  )
+  
+  
   gpuc}
-
 
 
 ggumap3=function(so, umap.df=NULL,
@@ -3654,7 +3544,7 @@ showdataset=function(so)
 # dataset filtering on the go
 ################################################################################
 
-filterds=function(so, dbcutoff=NULL, filter.empty.drops=NULL, demuxvar="sample_name", qc.pars=NULL, keepvar=NULL, keep.classes=NULL){
+filterds=function(so, dbcutoff=NULL, filter.empty.drops=NULL, demuxvar="sample_name", qc.pars=NULL){
   if(!is.null(qc.pars)){
     qcpars=qc.pars 
   }
@@ -3734,51 +3624,15 @@ cellinfo.getmarkers=function(so, clusvar="seurat_clusters", selecttop=NULL){
   
   if(is.null(so$RNA@misc$top_markers)){  
     so=seuratmarkers.delegate(so, minfc=1, group_column=clusvar, replicate_column=replicatevar, fullrecreate=fullrecreate, fullreload=fullreload, ...)
-  }else{
-    
-    
   }
   
 }
 
 
 
-################################################################################
-# deduplicate marker list forcing the marker to be assigned to the highest expressing cluster
-################################################################################
-
-      deduplicate.markers=function(markers, gene.field="feature", logfc.field="log_fc", group.field="group1"){
-      deduplicated_markers <- markers %>%
-     group_by(!!sym(gene.field)) %>%
-     slice_max(order_by = !!sym(logfc.field), n = 1, with_ties = FALSE) %>%
-      ungroup() %>% as.data.frame %>% arrange(!!sym(group.field), -!!sym(logfc.field))
-      deduplicated_markers
-      }
-
-harmonise.marker.table=function(m){
-if("cluster" %in% grep("group1|cluster", colnames(m), value=T)){
- m = m %>% dplyr::mutate(group1=cluster, feature=gene, log_fc=avg_log2FC, rate1=pct.1, rate2=pct.2) 
-}  
-m  
-}
-harmonise.all.markers=function(so){
-  
-for(j in names(so$RNA@misc)){
- 
-  if(j %in% c("markers", "top_markers")){
-    so$RNA@misc[[j]]=harmonise.marker.table(so$RNA@misc[[j]])
-  }else{
-    so$RNA@misc[[j]]$markers=harmonise.marker.table(so$RNA@misc[[j]]$markers)
-    so$RNA@misc[[j]]$top_markers=harmonise.marker.table(so$RNA@misc[[j]]$top_markers)
-    }
-
-}
-so}  
-  
-}
 
 
-get.cellinfo.markerlist=function(so, clusvar="seurat_clusters", clusters=NULL, markers=NULL, ass="SCT", groupvarname="group1",lfcvarname="log_fc", extended.output=T, deduped=T, nmarkers=NULL){
+seriatecells=function(so, clusvar="seurat_clusters", clusters=NULL, meth="signature", markers=NULL, ncells=100, ass="SCT", groupvarname="group1",lfcvarname="log_fc", extended.output=T, deduped=T, nmarkers=NULL){
   
   Idents(so)=clusvar
   if(is.null(clusters)){
@@ -3789,6 +3643,7 @@ get.cellinfo.markerlist=function(so, clusvar="seurat_clusters", clusters=NULL, m
   
   
   markers= so@assays$RNA@misc$top_markers
+  
   
   if(is.null(markers)){
     stop("There are no markers! please add markers under @assays$RNA@misc$top_markers\n" ) 
@@ -3812,68 +3667,41 @@ get.cellinfo.markerlist=function(so, clusvar="seurat_clusters", clusters=NULL, m
     
     
     if(deduped==T){
-
+      fullgns= lapply(markerlist0, function(x) x %>% pull(feature)) %>% Reduce(c, .)
+      
       ###when duplicates, keep the gene as marker in the cluster where it shows highest log_fold change
       fcat("Assigning genes in more than one cluster to the highest expressing cluster...")    
-      #NEW CODE!!! hopefully more efficient
+      deduped=lapply(unique(fullgns), function(x){
+        lapply(markerlist0, function(y) y %>% filter(feature==x)) %>% Reduce(condrbind, .) %>% arrange(-!!sym(lfcvarname)) %>% head(n=1)  %>% select(feature,!!sym(lfcvarname), !!sym(groupvarname)) 
+        
+      }) %>% Reduce(rbind, .)
       
-       markers.revised=deduplicate.markers(markerlist0 %>% Reduce(rbind, .), logfc.field=lfcvarname, group.field = groupvarname)
+      deduped2= deduped %>% dplyr::mutate(ncluster=sapply(deduped[[groupvarname]], function(x) generalreplace(x, clusids,1:length(clusids)), USE.NAMES=F )) %>% arrange(ncluster)
+      
+      #arrange genes from highest log fold change to lowest per cluster
+      markers.revised= deduped2 %>% group_by(ncluster) %>% arrange(-!!sym(lfcvarname), .by_group=T) %>% ungroup()
+      
+      
     }else{
       markers.revised=markers # forwarding the original table
     }
     
-    ############################################################################
-    # assemble final markerlist
-    ############################################################################
     
-        if(is.null(nmarkers)){    
+    markergaps= markers.revised %>% pull(ncluster) %>% as.integer %>% diff %>% as.logical %>% which
+    markervector=markers.revised %>% pull(feature) 
+    
+    if(is.null(nmarkers)){    
       markerlist=lapply(as.character(clusids), function(x) markers.revised %>% filter(!!sym(groupvarname)==x) %>% pull(feature))
     }else{
       markerlist=lapply(as.character(clusids), function(x) markers.revised %>% filter(!!sym(groupvarname)==x) %>% pull(feature) %>% head(nmarkers))
+      
     }
-    
     names(markerlist)=as.character(clusids)  
+    markergaps=lapply(1:length(markerlist), function(x) rep(x, length(markerlist[[x]]))) %>% Reduce(c, .) %>% diff %>% as.logical %>% which
     
-    
-    names(markerlist)=as.character(clusids)  
-}
-markerlist  
-
-}
-
-cellinfo.get.markerlist=get.cellinfo.markerlist
-
-
-
-cellinfo.init= function(so, seriate=T, ncells=100,clusvar="seurat_clusters",markerset=clusvar, ...){
- cellinfo=list()
- so=setmarkers(so, markerset=markerset)
-   cellinfo$cell.list=cellinfo.getcells(so, clusvar=clusvar, ncells=ncells)
-   cellinfo$markerlist=cellinfo.get.markerlist(harmonise.all.markers(so), clusvar=clusvar)
-   #if(is.numeric.like(names(cellinfo$markerlist))){
-  # names(cellinfo$markerlist)=paste_("cluster", names(cellinfo$markerlist))
-    # }
-   #if(is.numeric.like(names(cellinfo$cell.list))){
-    # names(cellinfo$cell.list)=paste_("cluster", names(cellinfo$cell.list))
-   #}
-   fcat("pt1")
-   cellinfo<-refresh.cellinfo.hard(cellinfo, cell.group.label=clusvar, marker.group.label=markerset)
-   fcat("cell group variable is", cellinfo$cell.group.variable)
-   if(seriate){
-     fcat("pt2")
-cellinfo=cellinfo.seriatecells.seurat(cellinfo, so, new.cells=F)  
+  }
   
-   }
-   
-cellinfo   
-}
-
-
-seriatecells=function(so, clusvar="seurat_clusters", clusters=NULL, meth="seurat", markers=NULL, ncells=500, ass="SCT", groupvarname="group1",lfcvarname="log_fc", extended.output=T, deduped=T, nmarkers=NULL){
   
-markerlist=get.cellinfo.markerlist(so, clusvar=clusvar, clusters=NULL, markers=markers,  groupvarname="group1",lfcvarname="log_fc", extended.output=T, deduped=T, nmarkers=nmarkers)
-  
-  markergaps=lapply(1:length(markerlist), function(x) rep(x, length(markerlist[[x]]))) %>% Reduce(c, .) %>% diff %>% as.logical %>% which
   
   fcat("Getting cells for each cluster...")
   cellist=lapply(as.character(clusids), function(x) {
@@ -3936,7 +3764,6 @@ markerlist=get.cellinfo.markerlist(so, clusvar=clusvar, clusters=NULL, markers=m
             fcat("Using Seurat Module Score method to rank cells...")
             celltotals=list()
             
-          
             newnames=names(markerlist) %>% make.names
             so <- AddModuleScore(so, markerlist, name=newnames )
             
@@ -4397,10 +4224,10 @@ chopstring=function(st) substr(st, 1, nchar(st)-1)
 
 
 ################################################################################
-#fix bad names in data frame columns
+#fix bad names in 
 ################################################################################
 
-fixnames= function(x){nms= x %>% colnames %>% gsub("#", "", .) %>% make.names; colnames(x)=nms; fcat("new names are", nms); x}
+fixnames= function(x){nms= x %>% colnames %>% make.names; colnames(x)=nms; fcat("new names are", nms); x}
 
 
 ################################################################################
@@ -4446,7 +4273,7 @@ squarelegend = function(varr, size=1, shape=0, colorlist=allcolors){
 # compare category changes for cells across several category variables
 ################################################################################
 
-transferplot= function(so=NULL, df=NULL,  labelvars, colorlist=allcolors, facetvar="all_cells", facet.ncol=NULL, facet.nrow=NULL, column.width=0.5, alpha=0.5, scale=2, width=3, height=2, plotlabel=""){
+transferplot= function(so=NULL, df=NULL,  labelvars, colorlist=allcolors, facetvar="all_cells", facet.ncol=NULL, facet.nrow=NULL, column.width=0.5, alpha=0.5, scale=5){
   
   
   sca=scale  
@@ -4471,7 +4298,7 @@ transferplot= function(so=NULL, df=NULL,  labelvars, colorlist=allcolors, facetv
   fcat("preparing colors")
   for(k in 1:length(labelvars)){
     
-    if(is.null(colorlist) || is.null(colorlist[[labelvars[k]]])){
+    if(is.null(colorlist[[labelvars[k]]])){
       fcat(as.character(labelvars[k]))
       cats=met %>% pull(!!sym(as.character(labelvars[k]))) %>% unique
       fcat("unique categories:", paste(cats, collapse=" "))
@@ -4500,7 +4327,7 @@ transferplot= function(so=NULL, df=NULL,  labelvars, colorlist=allcolors, facetv
   t2= t1 %>% dplyr::mutate(ind= 1:nrow(t1)) %>% pivot_longer(., cols=labelvars, names_to="originalcolumn", values_to="cell.label")
   
    fcat("making plot")
-  tpdf(path=config$plotpath, paste0("alluvialplot_labeltransfer_",plotlabel, "_", paste(labelvars, collapse="-")), width=pw*5/2*scale*width, height=pw*scale*height)
+  tpdf(path=config$plotpath, paste0("alluvialplot_labeltransfer", paste(labelvars, collapse="-")), width=pw*5/2*sca/10, height=pw*sca*3/14)
   ga=ggplot(t2,
             aes(y = Freq, x=factor(originalcolumn, levels=labelvars), stratum=cell.label, alluvium=ind, fill=cell.label))+ 
     geom_flow() +
@@ -4508,7 +4335,7 @@ transferplot= function(so=NULL, df=NULL,  labelvars, colorlist=allcolors, facetv
     geom_text(stat = "stratum", aes(label = after_stat(stratum)))+#, min.segment.length=0.1) +
     scale_x_discrete(expand= c(.1, .1), labels = labelvars)+
     facet_wrap(~factor(get(freqvar), levels=(colorlist[[freqvar]] %>% names)), ncol=facet.ncol, nrow=facet.nrow)+
-    scale_fill_manual(values=colorlist[labelvars] %>% Reduce(c,.))+
+    #scale_fill_manual(values=colorlist[labelvars] %>% Reduce(c,.))+
     theme_classic()
   print(ga+NoLegend())
   dev.off()
@@ -4890,23 +4717,7 @@ glitch.invariants=function(matt, val=0.00001){
 ################################################################################
 #create a heatmap based directly from a cellinfo object
 ################################################################################
-prepare.cellgroup.labels=function(cellinfo){
- 
-  label.list=lapply(names(cellinfo$cell.list), function(name) {
-    vec_length <- length(cellinfo$cell.list[[name]])
-    middle <- ceiling(vec_length / 2)
-    out <- rep(NA_character_, vec_length)
-    out[middle] <- name
-    out
-  })
-  
-  label.list %>% Reduce(c, .)
-  
-  }
-   
-  
 
-  
 
 cellinfo.heatmap= function(so,
                            cellinfo,
@@ -4948,8 +4759,7 @@ cellinfo.heatmap= function(so,
   
   
   fcat("getting data matrix...")
-  # upgraded for seurat >v4
-mat<- GetAssayData(so, assay = assay, slot = "data")[cellinfo$markers, cellinfo$cells] %>% as.matrix
+  mat=so[cellinfo$markers, cellinfo$cells ]@assays[[assay]]@data %>% as.matrix
   fcat("finding invariant and absent genes...")
   absent.genes= setdiff(cellinfo$markers, rownames(mat))
   variant.rows=get.variant.rows(mat)
@@ -5011,24 +4821,14 @@ mat<- GetAssayData(so, assay = assay, slot = "data")[cellinfo$markers, cellinfo$
   
   fcat("getting data matrix...")
   
-  mat2<<-GetAssayData(so, assay = assay, slot = "data")[cellinfo2$markers, cellinfo2$cells] %>% as.matrix
-
+  mat2=so[cellinfo2$markers, cellinfo2$cells ]@assays[[assay]]@data %>% as.matrix
   
   cats=cellinfo2$cell.metadata
   
   for(ct in cats){
     
     if(!is.null(allcolors[[ct]])){  
-      cellinfo2$cell.annotation[[ct]]= factor(cellinfo2$cell.annotation[[ct]], levels=colorlist[[ct]] %>% names) 
-    }
-  }
-  
-    cats2=cellinfo2$marker.metadata
-  
-  for(ct in cats2){
-    
-    if(!is.null(allcolors[[ct]])){  
-      cellinfo2$marker.annotation[[ct]]= factor(cellinfo2$marker.annotation[[ct]], levels=colorlist[[ct]] %>% names) 
+      cellinfo2$cell.annotation[[ct]]= factor(cellinfo2$cell.annotation[[ct]], levels=allcolors[[ct]] %>% names) 
     }
   }
   
@@ -5049,8 +4849,7 @@ mat<- GetAssayData(so, assay = assay, slot = "data")[cellinfo$markers, cellinfo$
                                border_color=NA,
                                right_annotation=ha, 
                                fontsize=5,
-                               main=name,
-                               labels_col=F#prepare.cellgroup.labels(cellinfo2)
+                               main=name 
                                #show_heatmap_legend=show.legend
                                #column_gap = unit(.2, "mm")
   )
@@ -5078,102 +4877,35 @@ mat<- GetAssayData(so, assay = assay, slot = "data")[cellinfo$markers, cellinfo$
 #refresh cellinfo object
 ################################################################################
 
-  ##############################################################################
-  # in this version, no assumptions are made and all information is defaulted.
-  # all previous annotations are thrown away
-  ##############################################################################
-refresh.cellinfo.hard=function(cellinfo, cell.group.label="cell.group", marker.group.label="marker.group"){
-  
 
-    fcat("readjusting")
-  
-  cellinfo$markers= cellinfo$markerlist %>% Reduce(c, .)
-  cellinfo$cells= cellinfo$cell.list %>% Reduce(c, .)
-  
-  if(is.null(names(cellinfo$cell.list))){
-   names(cellinfo$cell.list) = 1:length(cellinfo$cell.list)
-  }
-  
-  fcat("making references")
-  cell.reference=lapply(1:length(cellinfo$cell.list), function(nn) rep(names(cellinfo$cell.list)[nn], length(cellinfo$cell.list[[nn]])   )) %>% Reduce(c, .)  
-  marker.reference=lapply(1:length(cellinfo$markerlist), function(nn) rep(names(cellinfo$markerlist)[nn], length(cellinfo$markerlist[[nn]])   )) %>% Reduce(c, .)
-  
-  ##making sure there arent deduped genes
-    fcat("removing potential duplicates in markers")
-  tff=!duplicated(cellinfo$markers)
-  cellinfo$markers=cellinfo$markers[tff]
-  marker.reference=marker.reference[tff]
-  
-  fcat("removing potential duplicates in cells")
-  tfc=!duplicated(cellinfo$cells)
-  cellinfo$cells=cellinfo$cells[tfc]
-  cell.reference=cell.reference[tfc]
-  
-  ## reassemble deduplicated lists
-   fcat("reassembling deduped lists")
-  markernames=cellinfo$markerlist %>% names
-  cellnames=cellinfo$cell.list %>% names
-  
-  cellinfo$markerlist=lapply(names(cellinfo$markerlist), function(x) cellinfo$markers[marker.reference==x]) %>% givename(., markernames)
-  cellinfo$cell.list=lapply(names(cellinfo$cell.list), function(x) cellinfo$cells[cell.reference==x]) %>% givename(., cellnames)
-  
-    fcat("designing cell and marker gaps for heatmaps")
-  cellinfo$gaps.markers=lapply(1:length(cellinfo$markerlist), function(x) rep(x, length(cellinfo$markerlist[[x]]))) %>% Reduce(c, .) %>% diff %>% as.logical %>% which
-  cellinfo$gaps.cells= lapply(1:length(cellinfo$cell.list), function(x) rep(x, length(cellinfo$cell.list[[x]]))) %>% Reduce(c, .) %>% diff %>% as.logical %>% which
-  
-  
-   #if(is.null(cellinfo$cell.annotation)){}
-
-  cellinfo$cell.annotation=as.data.frame(cell.reference) %>% giverownames(., cellinfo$cells) %>% givecolnames(., 1, cell.group.label)
-  
-  cellinfo$marker.annotation= as.data.frame(marker.reference) %>% giverownames(., cellinfo$markers) %>% givecolnames(., 1, marker.group.label)
-  
-  cellinfo$cell.metadata= colnames(cellinfo$cell.annotation)
-  cellinfo$marker.metadata= colnames(cellinfo$marker.annotation)
-  cellinfo$cell.group.variable=ifelse(cell.group.label=="cell.group", NULL, cell.group.label)
-  cellinfo$marker.group.variable=ifelse(cell.group.label=="marker.group", NULL, marker.group.label)
-  cellinfo
-  
-}
-
-
-
-
-## this version attempts to preserve previous annotations 
 refresh.cellinfo=function(cellinfo, cell.group.label="cell.group", marker.group.label="marker.group"){
   fcat("readjusting")
   
   cellinfo$markers= cellinfo$markerlist %>% Reduce(c, .)
   cellinfo$cells= cellinfo$cell.list %>% Reduce(c, .)
-  
-  if(is.null(names(cellinfo$cell.list))){
-   names(cellinfo$cell.list) = 1:length(cellinfo$cell.list)
-  }
-  
   fcat("making references")
   cell.reference=lapply(1:length(cellinfo$cell.list), function(nn) rep(names(cellinfo$cell.list)[nn], length(cellinfo$cell.list[[nn]])   )) %>% Reduce(c, .)  
   marker.reference=lapply(1:length(cellinfo$markerlist), function(nn) rep(names(cellinfo$markerlist)[nn], length(cellinfo$markerlist[[nn]])   )) %>% Reduce(c, .)
   
   ##making sure there arent deduped genes
-    fcat("removing potential duplicates in markers")
+  
   tff=!duplicated(cellinfo$markers)
   cellinfo$markers=cellinfo$markers[tff]
   marker.reference=marker.reference[tff]
   
-  fcat("removing potential duplicates in cells")
+  
   tfc=!duplicated(cellinfo$cells)
   cellinfo$cells=cellinfo$cells[tfc]
   cell.reference=cell.reference[tfc]
   
   ## reassemble deduplicated lists
-   fcat("reassembling deduped lists")
   markernames=cellinfo$markerlist %>% names
   cellnames=cellinfo$cell.list %>% names
   
   cellinfo$markerlist=lapply(names(cellinfo$markerlist), function(x) cellinfo$markers[marker.reference==x]) %>% givename(., markernames)
   cellinfo$cell.list=lapply(names(cellinfo$cell.list), function(x) cellinfo$cells[cell.reference==x]) %>% givename(., cellnames)
   
-    fcat("designing cell and marker gaps for heatmaps")
+  
   cellinfo$gaps.markers=lapply(1:length(cellinfo$markerlist), function(x) rep(x, length(cellinfo$markerlist[[x]]))) %>% Reduce(c, .) %>% diff %>% as.logical %>% which
   cellinfo$gaps.cells= lapply(1:length(cellinfo$cell.list), function(x) rep(x, length(cellinfo$cell.list[[x]]))) %>% Reduce(c, .) %>% diff %>% as.logical %>% which
   
@@ -5323,15 +5055,13 @@ seriategenes=function(so, cellinfo, assay="SCT", seriate.groups=F, link.markers.
         st
       }
   }) %>% givename(., cellinfo$markerlist %>% names)
-  fcat("clusmeans", clusmeans)
   
-
+  
   if(seriate.groups){
-    names(clusmeans)= 1:length(clusmeans)
-    neworder=as.integer(clusmeans %>% sort %>% names)
+    names(clusmeans)= 1:nk
+    neworder=clusmeans %>% sort %>% names
     newnames=names(cellinfo$markerlist)[neworder]
-    repmt<<-lapply(neworder, function(tt) ordered.gene.list[[tt]]) %>% givename(., newnames)
-    cellinfo$markerlist= repmt
+    cellinfo$markerlist=lapply(neworder, function(tt) ordered.gene.list[[tt]]) %>% givename(., newnames)
   }else{
     
     cellinfo$markerlist=ordered.gene.list 
@@ -5356,7 +5086,7 @@ adjust.markerlist.tail= function(markerlist, n) lapply(markerlist, function(x) r
 
 removenas=function(x) x[!is.na(x)]
 adjust.markers= function(cellinfo, n){
-  cellinfo$markerlist= adjust.markerlist(cellinfo$markerlist, n)
+  cellinfo$markerlist= adjust.markerlist(cellinfo.markerlist, n)
   cellinfo=refresh.cellinfo(cellinfo)
   cellinfo
 }
@@ -5630,7 +5360,7 @@ removemarkers=function(cellinfo, markers){
 ################################################################################
 
 #szymkiewicz_simpson_coefficient to calculate size of overlaps between vectors
-zsoverlap <- function(vector1, vector2) {
+zsoverlap <- Vectorize(function(vector1, vector2) {
   
   # Calculate the size of the intersection
   intersection_size <- length(intersect(vector1 , vector2))
@@ -5645,7 +5375,7 @@ zsoverlap <- function(vector1, vector2) {
   szymkiewicz_simpson <- intersection_size / min_size
   
   return(szymkiewicz_simpson)
-}
+}, USE.NAMES=F)
 
 
 ################################################################################
@@ -5681,6 +5411,14 @@ removelegends= function(hm, legends, where="top"){
 
 simpleCache(paste_("genes", "db", "human_tfs"), {
 # m <- fread("http://humantfs.ccbr.utoronto.ca/download/v_1.01/DatabaseExtract_v_1.01.csv")
+#m[,.N,by=`Is TF?`]
+#Is TF?    N
+# 1:    Yes 1639
+# 2:     No 1126
+#ccbr.tfs <- m[`Is TF?`=="Yes", `HGNC symbol`] #paste0(`Ensembl ID`,"-",`HGNC symbol`)]
+
+## obtained from homococo v11, from all the TFs containing matrices for which DNA can be scanned
+
 hocomoco.tfs= c("AHR", "AIRE", "ALX1", "ALX3", "ALX4", "ANDR", "ANDR", "ANDR", 
                 "AP2A", "AP2B", "AP2C", "AP2D", "ARI3A", "ARI5B", "ARNT2", "ARNT", 
                 "ARX", "ASCL1", "ASCL2", "ATF1", "ATF2", "ATF2", "ATF2", "ATF3", 
@@ -5784,9 +5522,7 @@ hocomoco.tfs= c("AHR", "AIRE", "ALX1", "ALX3", "ALX4", "ANDR", "ANDR", "ANDR",
                 "ZSC22", "ZSC31", "ZSCA4")
 #union(ccbr.tfs, hocomoco.tfs)  
 hocomoco.tfs
-}, assignToVar="tfList",  recreate=F)
-
-fcat("1")
+}, assignToVar="tfList",  recreate=T)
 istf= function(x) x %in% tfList 
 #lrtable=readRDS(file.path(params$resourcepath, "cell_cell_interactions/CellTalkDB/human_lr_pair.rds"))
 
@@ -5896,6 +5632,11 @@ replacemarkers=function(so, newmarkers){
     return(so)
   }}
 
+
+
+################################################################################
+#
+################################################################################
 
 rmquery=Vectorize(function(x){if(grepl("query",x)){
   strsplit(x, split="query_")[[1]][2]
@@ -6089,56 +5830,6 @@ cat(".")
 allrocs
 }
 
-################################################################################
-# load GSEA gene signatures
-################################################################################
-
-load.gene.signatures=function(sigs=NULL, recreate=F){
-  
-library(hypeR)
-library(stringr)
-#library(signatureSearch)
-    #updated chemical perturbations signatures
-    simpleCache::simpleCache("all_gene_signatures" %>% addversion, {
-        #cp.sigs= read_gmt(getExternalFile("l1000_cp.gmt", "https://lincs-dcic.s3.amazonaws.com/LINCS-sigs-2021/gmt/l1000_cp.gmt"))
-  
- # lig.sigs= read_gmt(getExternalFile("l1000_lig.gmt","https://lincs-dcic.s3.amazonaws.com/LINCS-sigs-2021/gmt/l1000_lig.gmt"))
-
-      
-    gsetpars=list(
-        GOBP=list(set=msigdb_gsets(species = "Homo sapiens", category = "C5", subcategory = "GO:BP"), name="GOBP"),
-    CELLTYPES=list(set=msigdb_gsets(species="Homo sapiens", category="C8"), name="CELLTYPES"),
-    PANGLAO=list(set=hypeR::enrichr_gsets(genesets = "PanglaoDB_Augmented_2021"), name="PANGLAODB"),
-    DESCARTES=list(set=hypeR::enrichr_gsets(genesets = "Descartes_Cell_Types_and_Tissue_2021"), name="DESCARTES"),
-    WIKIPATHWAYS=list(set=hypeR::enrichr_gsets(genesets ="WikiPathway_2021_Human"), name="WIKIPATHWAYS"),
-    GOMF=list(set=msigdb_gsets(species="Homo sapiens", category="C5", subcategory="GO:MF")), 
-    #GPDOWN=list(set=hypeR::enrichr_gsets(genesets = "Gene_Perturbations_from_GEO_down"), name="GPDOWN"), 
-    #GPUP=list(set=hypeR::enrichr_gsets(genesets = "Gene_Perturbations_from_GEO_up"), name="GPUP"),
-      TFPERT=list(set=hypeR::enrichr_gsets(genesets = "TF_Perturbations_Followed_by_Expression"), name="TFPERT"),
-      #=list(set=hypeR::enrichr_gsets(genesets = "Kinase_Perturbations_from_GEO_down"), name="KINPERTDOWN"),
-      #KINPERTUP=list(set=hypeR::enrichr_gsets(genesets = "Kinase_Perturbations_from_GEO_up"), name="KINPERTUP"),  
-      #CHEMPERTDOWN=list(set=hypeR::gsets$new(cp.sigs[grepl("down$", names(cp.sigs))], name="LINCS1000_chempert_down_downloaded", version="v2021"), name="CHEMPERTDOWN"),
-      #CHEMPERTUP=list(set=hypeR::gsets$new(cp.sigs[grepl("up$", names(cp.sigs))], name="LINCS1000_chempert_up_downloaded", version="v2021"), name="CHEMPERTUP"),
-      #CHEMPERTDOWN=list(set=hypeR::enrichr_gsets(genesets = "LINCS_L1000_Chem_Pert_down"), name="CHEMPERTDOWN"),
-      #CHEMPERTUP=list(set=hypeR::enrichr_gsets(genesets = "LINCS_L1000_Chem_Pert_up"), name="CHEMPERTUP"),
-      LIGPERTDOWN=list(set=hypeR::enrichr_gsets(genesets = "Ligand_Perturbations_from_GEO_down"), name="LIGPERTDOWN"),
-      LIGPERTUP=list(set=hypeR::enrichr_gsets(genesets = "Ligand_Perturbations_from_GEO_up"), name="LIGPERTUP")
-      #LIGPERTLINCSDN=list(set=hypeR::gsets$new(lig.sigs[grepl("down$", names(lig.sigs))], name="LINCS1000_ligandpert_down_downloaded", version="v2021"), name="LIGPERTLINCSDN"),
-      #LIGPERTLINCSUP=list(set=hypeR::gsets$new(lig.sigs[grepl("up$", names(lig.sigs))], name="LINCS1000_ligandpert_up_downloaded", version="v2021"), name="LIGPERTLINCSUP"),
-      #CGP=list(set=msigdb_gsets(species="Homo sapiens",category="C2", subcategory = "CGP" ), name="CGP")
-    #ARCHS4CELL_LINES=list(set=ARCHCELLLINES, name="ARCHS4_Cell-Lines")
-    
-  )
-    }, assignToVar="gsetpars", recreate=recreate)
-  
-    fcat("Existent gene sets are:", paste(names(gsetpars), collapse=","))
-if(is.null(sigs)){
-  gsetpars
-  }else{
-  gsetpars[sigs]
-  } 
-
-}
 
 ################################################################################
 # perform hypeR gene set enrichments and plots
@@ -6239,15 +5930,15 @@ allhyperdfs=lapply(gsetpars, function(gp){
 ################################################################################
 # extract colors from a ggplot, or any other parameter for that matter
 ################################################################################
-getcolors=function(plt, type){
-plot_data <- ggplot_build(plt)
-  
-  # Extract the colors from the data
-  colors <- unique(unlist(lapply(plot_data$data, function(layer) {
-    layer[[type]]
-  })))
-  colors
-}
+# getcolors=function(plt, type){
+# plot_data <- ggplot_build(plt)
+#   
+#   # Extract the colors from the data
+#   colors <- unique(unlist(lapply(plot_data$data, function(layer) {
+#     layer[[type]]
+#   })))
+#   colors
+# }
 
 ################################################################################
 # find if an array is empty
@@ -6280,30 +5971,63 @@ if(is.null(colorlist[[colorvar]])){
     return(colorlist)
  }
 
+
+
+################################################################################
+# generate full paths
+################################################################################
+
+#generate.full.paths=function(meta) meta %>% dplyr::mutate(bampath=paste0(bamroot,Experiment, "_REP", replicate,".mLb.clN.sorted.bam"), bigwigpath=paste0(bamroot,"/bigwig/",Experiment, "_REP", replicate,".mLb.clN.bigWig"))
+robust.home.path= function(x) gsub("~", "/home/rstudio", x)
+
+generate.full.paths=function(meta) meta %>% dplyr::mutate( bampath=paste0(robust.home.path(bamroot),Experiment, "_REP", replicate,".mLb.clN.sorted.bam"), bigwigpath=paste0(robust.home.path(bamroot),"/bigwig/",Experiment, "_REP", replicate,".mLb.clN.bigWig"),bampath.merged=paste0(robust.home.path(nfcoreroot),"/bwa/merged_replicate/",gsub("-r[0-9]","", Experiment),".mRp.clN.sorted.bam"),  bigwigpath.merged=paste0(robust.home.path(bamroot),"/bwa/merged_replicate/bigwig/",gsub("-r[0-9]","", Experiment),".mRp.clN.bigWig"))
+
+remove.rn= function(x)  gsub("-r[0-9]+", "", x)
+
 ################################################################################
 # import metadata from dataset number j as described in the config
 ################################################################################
 
-get.metadata.from.dataset=function(j, ids=NULL, exclude= dataset.info$exclude_cell_type, celltype.var=dataset.info$cell_type_variable, dataset.info=dataset.info){  
-  
-metadata.main<- fread(dataset.info$dataset_paths_metadata[j]) %>% as.data.frame %>% fixcolnames %>% dplyr::mutate(dsname=dataset.info$dataset_name[j], dscategory=ifelse(dataset.info$is_reference[j], "reference", "test"), dsdatatype="ATAC", Experiment=!!sym(dataset.info$metadata_sample_name_col[j])) %>% col2names(., dataset.info$metadata_sample_name_col[j])
+get.metadata.from.dataset=function(j, ids=NULL, exclude= dataset.info$exclude_cell_type, celltype.var=dataset.info$cell_type_variable, dataset.info){  
+  fcat("1")
+metadata.main<- fread(dataset.info$dataset_paths_metadata[j])
+
+fcat("1.1")
+metadata.main= metadata.main %>% as.data.frame(.,  optional=T) %>% fixcolnames %>% dplyr::mutate(dsname=dataset.info$dataset_name[j], bamroot=make.bampath(get.nfcore.root(j, dataset.info)), nfcoreroot=get.nfcore.root(j, dataset.info), dscategory=dscategory, dsdatatype="ATAC", Experiment=!!sym(dataset.info$metadata_sample_name_col[j]), Condition=!!sym(dataset.info$cell_group_vars[j]), !!sym(dataset.info$cell_group_vars[j]):=as.character(!!sym(dataset.info$cell_group_vars[j]))) 
+if(!("replicate" %in% colnames(metadata.main))){
+  metadata.main$replicate=1
+}
+
+if(!any(grepl("_REP[0-9]$", metadata.main[[dataset.info$metadata_sample_name_col[j]]]))){
+
+  metadata.main[[dataset.info$metadata_sample_name_col[j]]]= paste0(metadata.main[[dataset.info$metadata_sample_name_col[j]]], "_REP", metadata.main$replicate)
+   
+}
+
+metadata.main= metadata.main %>% col2names(., dataset.info$metadata_sample_name_col[j])
+
+metadata.main<- metadata.main %>% generate.full.paths
+
+
+
 
 if(!dataset.info$is_reference[j]){
-  
- metadata.main= metadata.main %>% dplyr::mutate(!!sym(dataset.info$cell_type_variable):=paste0("test_",!!sym(dataset.info$cell_group_vars[j]) ) )
+  fcat("2")
+ metadata.main= metadata.main %>% dplyr::mutate( Condition=paste0(!!sym(dataset.info$cell_group_vars[j]), "_ds",j) )
 }
   
-rownames(metadata.main)=splitsamplename(rownames(metadata.main))
 
 if(is.null(ids)){
-  ids=rownames(metadata.main) 
+  fcat("3")
+rownames(metadata.main)=metadata.main[, dataset.info$metadata_sample_name_col[j]]
+ids=rownames(metadata.main)
 }
 #retrieve quality control files
-
+fcat("4")
 if(any(grepl("multiqc", list.files(dataset.info$dataset_paths_nfcore[j])))){
   
 metadata.qc= fread(file=paste0( dataset.info$dataset_paths_nfcore[j], "/multiqc/", config$peak_width, "/multiqc_data/multiqc_samtools_stats_1.txt")) %>% as.data.frame 
-rownames(metadata.qc) <- metadata.qc %>% pull(Sample) %>% splitsamplename
+rownames(metadata.qc) <- metadata.qc %>% pull(Sample) # %>% splitsamplename
 
 
 metadata.frip=import.multiqc.x.x.info(j, filename="multiqc_mlib_frip_score-plot.txt", varname="frip.score")
@@ -6421,9 +6145,9 @@ import.multiqc.x.x.info= function(j, filename="multiqc_mlib_peak_count-plot.txt"
   
   
   ff= fread(file=paste0( dataset.info$dataset_paths_nfcore[j], "/multiqc/", config$peak_width, "/multiqc_data/", filename)) %>% as.matrix 
-ff <- ff %>% giverownames(., ff[, "Sample"])
-rownames(ff) <- rownames(ff) %>% splitsamplename
-colnames(ff) <- colnames(ff) %>% splitsamplename
+ff <- ff %>% giverownames(., ff[, "Sample"]) 
+ff<-ff[, -1]
+colnames(ff) <- rownames(ff)
 ff <- lapply(rownames(ff), function(x){l=list(); l[[x]]=as.numeric(ff[x,x]); l}) %>% unlist %>% as.data.frame %>% givecolnames(., nms=varname) 
 ff
 
@@ -6434,28 +6158,24 @@ ff
 ################################################################################
 # import counts
 ################################################################################
+
+
+
   
    
-  import.counts=function(j, dataset.info){ 
+  import.counts=function(j, dataset.info, recreate=F){ 
     simpleCache(paste0("count_list_dataset", dataset.info$dataset_name[j], "_path_", digest::digest(c(dataset.info$dataset_paths_counts_self[j],dataset.info$dataset_paths_counts_ref[j]) ) ) %>% addversion, {
-if(dataset.info$is_reference[j] & sum(dataset.info$is_reference)==1){
-  dataset.is.ref=1
-counts.to.ref= fread(file= dataset.info$dataset_paths_counts_self[j], skip=1) %>% as.data.frame %>% col2names(., "Geneid")  
-}else{
-#when there is more than one reference, it will be assumed that each subreference has its peaks
-#quantified in the global reference via the nfcore pipeline and the path is to the corresponding allmergedcounts_withreference 
-counts.to.ref= fread(file=paste0( dataset.info$dataset_paths_counts_ref[j], "/allmergedcounts_withreference.txt"), skip=1) %>% as.data.frame %>% col2names(., "Geneid")
-}
 
+counts.to.ref= fread(file= dataset.info$dataset_paths_counts_ref[j], skip=1) %>% as.data.frame %>% col2names(., "Geneid")  
 counts.to.self= fread(file=dataset.info$dataset_paths_counts_self[j], skip=1) %>% as.data.frame %>% col2names(., "Geneid")
 
 
-colnames(counts.to.self)= counts.to.self %>% colnames %>% splitsamplename
-colnames(counts.to.ref)= counts.to.ref %>% colnames %>% splitsamplename
+colnames(counts.to.self)= counts.to.self %>% colnames %>% clean.extension.bam
+colnames(counts.to.ref)= counts.to.ref %>% colnames %>% clean.extension.bam
 
 list(counts.to.self=counts.to.self, counts.to.ref=counts.to.ref)
 
-    }, assignToVar="counts.list", reload=T)
+    }, assignToVar="counts.list", recreate=recreate)
  counts.list     
       
   }
@@ -6463,167 +6183,9 @@ list(counts.to.self=counts.to.self, counts.to.ref=counts.to.ref)
 
 
 ################################################################################
-# gene peak and tfbs annotation routines
-################################################################################
-
-prepare.motif.annotation.materials=function(){
-  fcat("importing gtf...")
-geneAnnot=rtracklayer::import(dataset.info$gtfpath)
-
-#get the annotation of only protein coding genes. perhaps a bit restrictive for this pipeline
-selGeneAnnot <- geneAnnot %>% as.data.frame %>% dplyr::filter(type=="gene", gene_type=="protein_coding") %>% GRanges
-
-#imported from ncnb2_code/atac/04,  doesn't work 
-#selGeneAnnot <- geneAnnot[(as.character(seqnames(geneAnnot)) %in% (peaksDt[,unique(chrom)]) & geneAnnot$type=="gene" & geneAnnot$gene_type=="protein_coding"),]
-
-## motif annotation files
-  fcat("importing motifs frome HOCOMOCO v11...")
-motifFile <- getExternalFile("HOCOMOCOv11_full_HUMAN_mono_jaspar_format.txt", "https://hocomoco11.autosome.org/final_bundle/hocomoco11/full/HUMAN/mono/HOCOMOCOv11_full_HUMAN_mono_jaspar_format.txt") 
-motifFileAnnot <- getExternalFile("HOCOMOCOv11_full_annotation_HUMAN_mono.tsv", "https://hocomoco11.autosome.org/final_bundle/hocomoco11/full/HUMAN/mono/HOCOMOCOv11_full_annotation_HUMAN_mono.tsv") 
-#### from 04 annotate_genes
-
-
-
-#### from annotate motifs
-  fcat("preparing motif scanning auziliar variables...")
-simpleCache::simpleCache("hocomoco_v11", {
-	hocomoco <- universalmotif::read_jaspar(motifFile)
-	hocomoco <- XMatrixList(lapply(hocomoco, function(m) universalmotif::convert_motifs(m, class = "TFBSTools-PFMatrix")), use.names = F, type = "PFMatrixList",    matrixClass = "PFMatrix")
-	names(hocomoco) <- lget(hocomoco, "name", slot=TRUE)
-	return(hocomoco)
-}, assignToVar="mtfSet")
-
-hocoAnnot <- fread(motifFileAnnot)
-setkey(hocoAnnot, Model)
-
-print(mtfSet)
-print(head(hocoAnnot))
-
-# T should be TBXT, the others are to be dplyr::filtered out (both on Y chromosome)
-hocoAnnot[`Transcription factor`=="T", `Transcription factor`:="TBXT"]
-
-mtfSet <- mtfSet[hocoAnnot[names(mtfSet), `Transcription factor`] %in% geneAnnot$gene_name]
-
-mtfNames <- hocoAnnot[names(mtfSet), `Transcription factor`] 
-names(mtfNames) <- names(mtfSet)
-mtfLabels <- sprintf("%s (%s)", mtfNames, names(mtfNames))
-names(mtfLabels) <- names(mtfSet)
-
-relevant.chromosomes= c(paste0("chr", 1:22), "chrX")
-
-
-fcat("Variables ready.")
-list(mtfSet=mtfSet, 
-  mtfNames=mtfNames, 
-  mtfLabels=mtfLabels, 
-  selGeneAnnot=selGeneAnnot,
-  relevant.chromosomes=relevant.chromosomes)
-  
-  
-  
-}
-
-################################################################################
 #
 ################################################################################
 
-get.global.peak.annotations=function(){
-  
-  library(TFBSTools)
-library(motifmatchr)
-  
-  mtf.prep.list=prepare.motif.annotation.materials()
-
-  list2env(mtf.prep.list, .GlobalEnv)
-  ################################################################################
-# arrange the peaks with the highest PC loadings into a GRanges object
-################################################################################
-  
-  fcat("formatting peak annotation as GRanges...")
-simpleCache("peaks_dt_global_annotations" %>% addversion, {
-peaks_dt_global=norm.peak.vals %>% as.data.frame %>% dplyr::mutate(seqnames=Chr,start=Start, end=End) %>% dplyr::select(Geneid,seqnames, start, end) %>% filter(seqnames %in% !!relevant.chromosomes) %>% GRanges
-#peaks_dt_global=norm.peak.vals %>% as.data.frame %>% dplyr::mutate(seqnames=Chr,start=Start, end=End) %>% dplyr::select(Geneid,seqnames, start, end) %>% GRanges
-
-
-
-fcat("Annotating TSS and overlapping...")
-peak.gene.annotations=list(
-peaks_dt_global=peaks_dt_global ,  
-closest_tss_global=geneAssignmentStrategies$closest_tss(peaks_dt_global, gene_annot=selGeneAnnot, window_size=MAX_DIST_GENE),
-    
-overlapping_promoters_global=geneAssignmentStrategies$promo(peaks_dt_global, gene_annot=selGeneAnnot)
-  )
-peak.gene.annotations
-}, assignToVar="peak.gene.annotations", reload=T)
-
- list2env(peak.gene.annotations, .GlobalEnv)
- 
-simpleCache(paste0("matched_motifs_allpeaks_version", analysis.version), {
-#mtfMat <- versionedCache(paste0("motif_counts_", dplyr::selected_pc), instruction={
-    fcat("matching motifs...")
-	if(!requireNamespace("BSgenome.Hsapiens.UCSC.hg38", quietly=T)){
-  BiocManager::install("BSgenome.Hsapiens.UCSC.hg38", update=FALSE, ask=FALSE)
-	}
-  
-	  mtfs <- motifmatchr::matchMotifs(mtfSet, peaks_dt_global, genome=config$genome_build, out="scores") 
-	
-	    fcat("counting motifs...")
-	  mtf_mat <- as.matrix(motifmatchr::motifCounts(mtfs))
-	rownames(mtf_mat) <- peaks_dt_global$Geneid
-	 
-	 fcat("formatting output...")
-	trimtfname= Vectorize(function(x) strsplit(x, split="_HUMAN")[[1]][1], USE.NAMES=F)
-	
-matrix.tfnames= trimtfname(colnames(mtf_mat))	
-mtf_mat=mtf_mat %>% givecolnames(., nms=matrix.tfnames)
-	
-mtf_mat}, assignToVar="mtf_mat", reload=T)
-	#return(mtfMat)
-#}, buildEnvir=list(
- # mtf_set=mtfSet, 
-  #peaks_dt=peaksDt[,.(chrom,start,end,rid)],
-  #genome_build=config$genome_build
-#))
-
-simpleCache("mtf_mat_gathered" %>% addversion, {
-  
-  unique.tfs=unique(colnames(mtf_mat))
-
-mtf.mat.summed.list=lapply(unique.tfs, function(tf){
-   fcat(tf)
-  mtchs=colnames(mtf_mat)==tf
-  if(sum(mtchs)==1){
-    mtf_mat[,colnames(mtf_mat)==tf] %>% coerce.to.matrix
-  }else{
-     apply(mtf_mat[,colnames(mtf_mat)==tf], 1, sum) %>% coerce.to.matrix %>% giverownames(., nms=rownames(mtf_mat)) %>% givecolnames(.,nms= tf)
-  }
-
-}) 
-
-mtf_mat_gathered=mtf.mat.summed.list %>% Reduce(cbind, .) %>% givecolnames(., nms=unique.tfs)
-mtf_mat_gathered
-
-}, assignToVar="mtf_mat_gathered", reload=T)
-
-
-
-simpleCache(paste_("motif_matrix_calculations_matrixid", digest::digest(mtf_mat_gathered)) %>% addversion, {
-  
-    list(mtf_props=apply(mtf_mat_gathered>0,2, function(x) sum(x)/length(x)),
-mtf_sums=apply(mtf_mat_gathered>0,2, function(x) sum(x)),
-nonmtf_sums=apply(mtf_mat_gathered==0,2, function(x) sum(x)))
-  }, assignToVar="mtf.props.list", reload=T)
-
-
-  fcat("Done.")
-list(peak.gene.annotations=peak.gene.annotations, 
-  mtf_mat=mtf_mat, 
-  mtf_mat_gathered=mtf_mat_gathered,
-  mtf.props.list=mtf.props.list
-  )
-
-
-}
 
 
 
@@ -7131,7 +6693,7 @@ peaklist=list(inrange=pks, below.range=peaks.always.below.range)
 
 lapply(1:length(peaklist), function(pk){
   
-  fwrite(norm.peak.vals[peaklist[[pk]], 2:4] %>% unname %>% giverownames(., NULL), file=paste0("~/ml2cell_code/metadata/", names(peaklist)[pk], ".bed"), sep="\t", row.names=F)
+  fwrite(norm.peak.vals[peaklist[[pk]], 2:4] %>% unname %>% giverownames(., NULL), file=paste0("~/metadata/", names(peaklist)[pk], ".bed"), sep="\t", row.names=F)
 })
 
 
@@ -7380,7 +6942,7 @@ outfile.script= NULL,
     }
   
     if(is.null(outfile.script)){
-    outfile.script="~/ml2cell_code/bash/deeptools_to_refsample.sh" 
+    outfile.script="~/bash/deeptools_to_refsample.sh" 
     }
   
     outfile.script.archive=paste0(outdir.internal, "/run_deeptools.sh")
@@ -7551,7 +7113,10 @@ fwrite(list(heatmap.command.cluster), file=of, append=T)
 })
 }
 
-list(computematrix.command=computematrix.command,
+list(
+  selected.bigwigs=selected.bigwigs, 
+  bigwigpaths.assembled=bigwigpaths.assembled,
+  computematrix.command=computematrix.command,
   heatmap.command=heatmap.command, 
   heatmap.command.cluster=heatmap.command.cluster,
   path.matrix=paste0(outdir.internal, "/integrated_matrix.gz"),
@@ -7567,6 +7132,304 @@ list(computematrix.command=computematrix.command,
   )
 
 }
+
+
+
+collect.sample.bigwigs= function(meta, test.class, test.class.variable, bigwigvar="bigwigpath"){
+  
+  selected.bigwigs=  lapply(1:length(test.class), function(tc){
+  fcat("collecting", test.class[tc], " samples")
+ meta %>% dplyr::filter(grepl(test.class[tc], !!sym(test.class.variable))) %>% pull(!!sym(bigwigvar))
+}) %>% givename(., test.class)
+  
+fcat(class(selected.bigwigs))
+  
+list(list=selected.bigwigs,   vector=selected.bigwigs %>% Reduce(c, .) )  
+
+}
+
+prepare.deeptools.script2= function(
+      test.class.variable,
+  test.class,
+    peak.list,
+  peaks.id="unnamed-peaks",
+  meta,
+  dataset.info,
+  test.filter=NULL,
+  invert=F,
+  max.test.samples=NULL,
+    reftype=config$target_cell_type,
+  refclass=config$cell_type_variable,
+  ref.sample.number=1,
+  ref.sample.id=NULL,
+  outdir=  NULL, 
+  outdir.internal=NULL,
+  outfile.matrix=NULL,
+outfile.script= NULL, 
+  outfile.sortedregions=NULL, 
+  num.clusters=4, 
+  append.to.file=F, 
+  cluster.using.samples=1,
+  sort.using.samples=1,
+  heatmap.height=28, 
+  bin.size=25, 
+  specific.samples=NULL,
+  yMin=0, 
+  yMax=1, 
+  zMin=0,
+  zMax=2, 
+  num.processors=1,
+  selected.bigwigs=NULL, #provide the exact path of the bigwigs and ignore everything else
+  date.use=NULL, 
+  replace=F, 
+  usemerged=T, 
+  run.external=F, one.per.class=T){
+  
+  prepdir= ifelse(run.external, prep.dir.for.out.root, identity)
+  
+  
+  fcat("preparing paths")
+  test.class.formatted=gsub(" ", "-", test.class)
+  
+  newdir=timestamp(paste(c("deeptools_ref",reftype, test.class.variable, gsub("\\|","-", test.class.formatted), peaks.id ), collapse="_"), date.use=date.use)
+
+  
+  if(is.null(outdir.internal)){
+   coredir=paste0(dataset.info$out_root, "/deeptoolsrerun/")
+   
+      if(!dir.exists(coredir)){
+  dir.create(coredir)
+  }
+        outdir.internal=paste0(coredir, newdir)
+  }
+  
+  outdir.external=outdir.internal %>% prepdir
+  
+  if(!dir.exists(outdir.internal)){
+  dir.create(outdir.internal)
+  }
+  
+  if(is.null(outfile.matrix)){
+    outfile.matrix=paste0(outdir.external, "/integrated_matrix.gz")
+  }else{
+  outifle.matrix=outfile.matrix %>% prepdir
+  }
+  
+    if(is.null(outfile.sortedregions)){
+    outfile.sortedregions=paste0(outdir.external, "/sortedregions.bed")
+    }else{
+    outifle.sortedregions=outfile.sortedregions %>% prepdir
+    }
+  
+    if(is.null(outfile.script)){
+    outfile.script=paste0("~/bash/deeptools", ifelse(run.external, "external","internal"),".sh" )
+    }
+  
+    outfile.script.archive=paste0(outdir.internal, "/run_deeptools", ifelse(run.external, "external","internal"),".sh")
+    outfile.scripts.list=list(bash=outfile.script, archive=outfile.script.archive)
+    
+  
+  fcat("preparing peak region files")
+  
+  peakfilenames=lapply(1:length(peak.list), function(y){
+  peak.list.name.formatted=gsub(" ", "-", names(peak.list)[y])  
+  peakfilename.internal=paste0(outdir.internal,"/", peak.list.name.formatted, ".bed")
+  peakfilename.external=paste0(outdir.external,"/", peak.list.name.formatted, ".bed")
+  fcat(y, "extracting bed data")
+  matt=norm.peak.vals[peak.list[[y]], 2:4]
+  rownames(matt)=NULL
+  fcat(y, "writing bed file")
+  fwrite(matt, file=peakfilename.internal, row.names=F, col.names=F, sep="\t")
+    fcat("making list")
+  list(internal=peakfilename.internal, external=peakfilename.external, name= paste(names(peak.list)[y], collapse="_") )
+}) %>% givename(., names(peak.list))
+
+
+  allpeakfilenames.external= lapply(peakfilenames, function(x) x$external)  
+  
+ 
+  
+  ##############################################################################
+  # preparing reference
+  ##############################################################################
+  fcat("preparing reference")
+  meta.ref= meta %>% dplyr::filter(dscategory=="reference", !!sym(refclass)==reftype)
+  if(is.null(ref.sample.id)){
+  meta.ref=meta.ref[ref.sample.id, ]
+  }else{
+  meta.ref=meta.ref[ref.sample.number, , drop=F]  
+  }
+  
+  ##############################################################################
+  # preparing and ordering bigwigs
+  ##############################################################################
+  fcat("preparing bigwigs")
+  #decide whether to use paths from merged library or merged replicate
+  bigwigvar= ifelse(usemerged, "bigwigpath.merged", "bigwigpath")
+  
+#dmatrix.refsample=grep(refsample, all.dmatrix.paths.reference, value=T)
+  
+  fcat("finding all bigwig files and assempling their paths assembling their paths")
+  
+  
+  if(is.null(selected.bigwigs)){
+
+  
+
+if(is.null(specific.samples)){
+  
+    fcat("no specific samples requested")
+  
+  #no specific samples have been defined: then collect paths for all the test.class elements in test.variable
+selected.bigwigs0=collect.sample.bigwigs(meta, test.class, test.class.variable, bigwigvar) 
+
+
+
+}else{
+
+  #specific samples have been chosen
+  fcat("specific samples have been chosen")
+  
+  selected.bigwigs0= collect.sample.bigwigs(meta, specific.samples, "Experiment", bigwigvar) 
+
+
+}
+    
+    if(one.per.class){
+     selected.bigwigs=lapply(selected.bigwigs0$list, function(x) x[1]) %>% Reduce(c,. ) 
+    }else{
+     selected.bigwigs=selected.bigwigs0$vector 
+    }
+    
+################################################################################
+# join with reference
+################################################################################
+selected.bigwigs= c(meta.ref %>% pull(!!sym(bigwigvar)), selected.bigwigs)
+selected.bigwigs= unique(selected.bigwigs) %>% prepdir
+
+fcat(selected.bigwigs)
+################################################################################
+# remove samples with a specific pattern in the file name
+################################################################################
+fcat("filtering out unwanted samples")
+if(!is.null(test.filter)){
+  
+    selected.bigwigs= grep(test.filter, selected.bigwigs, invert=invert, value=T)
+     
+  }
+
+  fcat("checking to adjust the total number of test samples displayed")
+  if(!is.null(max.test.samples)){
+    if(max.test.samples<=length(selected.bigwigs)){
+   selected.bigwigs=selected.bigwigs[1:max.test.samples] 
+    }
+  }
+}
+  
+ bigwig.refsample="" 
+
+################################################################################
+# WRITING SRCIPT  
+################################################################################
+  fcat("writing script")
+  
+    outfile.template="~/mnt_out/matrix_B.gz"
+  
+################################################################################
+# prepare computeMAtrix command
+################################################################################
+
+computematrix.command=c(
+  "computeMatrix reference-point -a 3000 -b 3000 --sortRegions descend -S ", 
+  selected.bigwigs,  
+  " -bs ", bin.size,
+    " --missingDataAsZero",
+  " --referencePoint center",
+  " -p", num.processors,
+  " -R ",
+  allpeakfilenames.external,"-o",
+   outfile.matrix,
+  " --skipZeros --outFileSortedRegions",
+  outfile.sortedregions
+  )  %>% paste(., collapse=" ")  %>% prepdir
+
+################################################################################
+# prepare plotHeatmap command
+################################################################################
+
+
+heatmap.command= paste0(
+  "plotHeatmap -m ", 
+  outfile.matrix, 
+  " --sortUsingSamples ",sort.using.samples,
+  " --zMin ", zMin, " --zMax ", zMax, " ", 
+  " --yMin ", yMin," --yMax ", yMax, " ",
+    "  --outFileSortedRegions ", outdir.external %>% prepdir , "/sorted_regions_heatmap.bed ",
+  "  --outFileNameMatrix ", outdir.external %>% prepdir, "/heatmap_matrix.gz ",
+  " --heatmapHeight ", heatmap.height,
+  " -o ", 
+  dataset.info$plotpath, 
+  paste_(newdir,"integrated_heatmap.pdf") 
+  ) %>% prepdir
+
+heatmap.command.cluster= paste0(
+  "plotHeatmap -m ", 
+  outfile.matrix, 
+  " --sortUsingSamples ",sort.using.samples,
+  " --zMin ", zMin, " --zMax ", zMax, " ", 
+  " --yMin ", yMin," --yMax ", yMax, " ",
+    " --hclust ", num.clusters, " --clusterUsingSamples ", cluster.using.samples,
+  "  --outFileSortedRegions ", outdir.external %>% prepdir , "/sorted_regions_heatmap_clustered.bed ",
+  "  --outFileNameMatrix ", outdir.external %>% prepdir, "/heatmap_matrix_clustered.gz ",
+  " --heatmapHeight ", heatmap.height,
+  " -o ", 
+  dataset.info$plotpath %>% prepdir, 
+  paste_(newdir,"integrated_heatmap_clustered.pdf")
+  ) %>% prepdir
+
+
+
+fcat("creating output scripts...")
+#there is a working script and an archive script going to bash and a script going to the deeptools output so it can be permantently reproduced later on
+
+#conditions to create the script
+# if there is no date specified,  if there is a date specified but replace is true, 
+if((is.null(date.use)) || (!is.null(date.use) && replace) ){
+lapply(outfile.scripts.list, function(of){
+  
+  fcat("writing to", of)
+if(!append.to.file){
+  fwrite(list("#!/usr/bin/bash"), file=of, append=F)  
+}
+
+fwrite(list(computematrix.command), file=of, append=append.to.file)  
+fwrite(list(heatmap.command), file=of, append=T)    
+fwrite(list(heatmap.command.cluster), file=of, append=T)    
+ 
+})
+}
+
+list(
+  selected.bigwigs=selected.bigwigs, 
+  original.bigwigs.list=selected.bigwigs0$list,
+  computematrix.command=computematrix.command,
+  heatmap.command=heatmap.command, 
+  heatmap.command.cluster=heatmap.command.cluster,
+  path.matrix=paste0(outdir.internal, "/integrated_matrix.gz"),
+  path.heatmap.matrix=paste0(outdir.internal, "/heatmap_matrix.gz"),
+  path.heatmap.matrix.clustered=paste0(outdir.internal, "/heatmap_matrix_clustered.gz"),
+  path.sortedregions=paste0(outdir.internal, "/sorted_regions_heatmap.bed"), 
+  path.sortedregions.clustered=paste0(outdir.internal, "/sorted_regions_heatmap_clustered.bed"), 
+  selected.bigwigs=selected.bigwigs,
+  all.bigwigs= selected.bigwigs,
+  outdir.internal=outdir.internal, 
+  outdir.external=outdir.external,
+  outfile.scripts.list=outfile.scripts.list
+  )
+
+}
+
+
 
 ################################################################################
 #prepare bigwigmerge command programatically
@@ -7638,10 +7501,10 @@ outfile.script= NULL,
     }
   
     if(is.null(outfile.script)){
-    outfile.script="~/ml2cell_code/bash/mergebigwig.sh"
+    outfile.script="~/bash/mergebigwig.sh"
     }
   
-  chr.sizes.file=prep.dir.for.project.root("~/ml2cell_code/metadata/GRCh38_EBV.chrom.sizes.tsv")
+  chr.sizes.file=prep.dir.for.project.root("~/metadata/GRCh38_EBV.chrom.sizes.tsv")
   
 
   fcat("finding reference sample") # pending: merge test samples into one file, but this depends on having mergebigwig
@@ -7753,6 +7616,546 @@ list(merge.bigwig.command=mbw.command, bedgraphtobigwig.command=btbb.command, so
 
 
 
+###original
+
+
+de.matches.invitro.workflow.individual = function(
+    envlist, recreate = F, ref = config$target_cell_type,
+    lineage = NULL, refvar = "celltype", reload = T, cores = 10,
+    comparison.id = paste0("vs", refvar, "_", ref), 
+    cutoff.mean=0, min.reads=0, min.expts=0, altHypothesis=NULL, filter.normalized=F
+){
+  library(stringr)
+
+  dds = envlist$dds
+  meta2 = envlist$meta2
+  dataset.info = envlist$dataset.info
+  peaks = envlist$peaks
+  meta3 = meta2
+
+  fcat("entering loop")
+
+  lapply(1:length(test.ids.list), function(k)  {
+
+    refs = paste(c(ref, lineage), collapse = "|")
+
+    allinvitro = colData(dds) %>%
+      as.data.frame %>%
+      dplyr::filter((Experiment %in% test.ids.list[[k]]) |
+                      grepl(refs, !!sym(refvar))) %>%
+      arrange(round) %>% pull(Experiment)
+
+    positives = make.class.target.list(
+      meta3[allinvitro, , drop = FALSE], "Condition"
+    )
+
+    # -------------------------
+    # ORIGINAL SUBSET OF PEAKS
+    # -------------------------
+   dds.invitro= dds[Reduce(c, peaks) %>% unique ,allinvitro] #case 2: only include concordance peaks in the DE calculation
+
+    
+    
+    rng = 1:length(positives)
+
+    par.deseq2.invitro.eachvstarget = parallel::mclapply(
+      rng,
+      function(x, dd, allpos, pd) {
+
+        lab = names(allpos)[x]
+        if (lab == ref) {
+          return(NULL)
+        } else {
+          classvar = "Condition"
+          levs = c(lab, ref)
+
+          is.target = function(x, targets)
+            fifelse(x %in% targets, levs[1], levs[2])
+
+          simpleCache::simpleCache(
+            paste0(
+              "deseq2_invitro_individual-", lab,
+              "_vs_", ref,
+              "_id_", comparison.id,
+              "filtermean", cutoff.mean, 
+              "minreads", min.reads, 
+              "minexpts", min.expts
+              #"_positivesid", digest::digest(allpos),
+              #"_ddsid_", digest::digest(dd)
+            ) %>% addversion,
+            {
+              dd[[paste0("target_vs_", ref)]] <-
+                factor(is.target(dd[[classvar]], allpos[[x]]$targets),
+                       levels = levs)
+
+              design(dd) <- as.formula(paste0("~target_vs_", ref))
+              
+              if(cutoff.mean>0){
+                 # -----------------------------------------------------------
+              # NEW STEP: Remove peaks whose normalized baseMean <= 2
+              # -----------------------------------------------------------
+              dd <- estimateSizeFactors(dd)
+              norm.mat <- counts(dd, normalized = TRUE)
+              baseMean <- rowMeans(norm.mat)
+
+              keep <- baseMean >= cutoff.mean   # Remove baseMean 
+              dd <- dd[keep, ]
+              rm(norm.mat)
+              }
+              
+              if(any(c(min.expts, min.reads)>0)){
+               
+                matt <- counts(dd, normalized = filter.normalized)
+                
+                
+                keep_by_condition <- sapply(levs, function(cond) {
+                
+                # Count how many samples per peak have >= y reads
+                 rowSums(matt[, get.experiments(cond, meta3), drop = FALSE] >= min.reads) >= min.expts
+                })
+
+                # keep peaks that satisfy filtering in *all* conditions
+                keep <- apply(keep_by_condition, 1, any) 
+                dd <- dd[keep, ]
+                 
+              }
+
+              dd <- DESeq(dd)
+
+              res <- results(dd,
+                             contrast = c(paste0("target_vs_", ref),
+                                          levs[1], levs[2]), altHypothesis=altHypothesis)
+            },
+            assignToVar = "res",
+            reload = reload, 
+            recreate=!reload
+          )
+
+          return(res %>% as.data.frame %>% 
+                   dplyr::mutate(target=lab, id = !!comparison.id) %>% names2col(., "Geneid"))
+        }
+      },
+      allpos = positives,
+      dd = dds.invitro,
+      mc.cores = cores,
+      mc.cleanup = TRUE
+    ) %>% givename(., names(positives[rng]))
+
+  }) %>% givename(., paste0("dataset", 1:length(test.ids.list)))
+}
+
+
+
+
+
+
+
+
+de.matches.invitro.workflow.sepbatches=function(envlist, recreate=F, ref=config$target_cell_type, refvar="celltype", reload=T, cores=1, comparison.id=paste0("vs", refvar, "_", ref) ){
+
+  dds=envlist$dds
+  meta2=envlist$meta2
+  dataset.info=envlist$dataset.info
+  selected.peaks=envlist$selected.peaks
+  
+  #meta3=conditional.suffix(meta2, search.var="dsname", target.var="Condition", pattern="Seruggia2025-3", suf="v")
+  meta3=meta2
+  colData(dds)= DataFrame(meta3)
+  
+  
+## we can compare to all peaks or to selected peaks (concordance peaks)
+  comp.types=c("all peaks", "selected peaks")
+  
+# go through each comparison type and eah batch  
+alldes=lapply(comp.types, function(comp.type){  
+ lapply(1:length(test.ids.list), function(k)  {
+  
+ #isolate the experiments of this one  batch together with the reference samples
+allinvitro= colData(dds) %>% as.data.frame %>% dplyr::filter((Experiment %in%  test.ids.list[[k]])|grepl(ref,!!sym(refvar)) ) %>% arrange(round) %>% pull(Experiment)
+
+# for the selected experiments, make a list of all existing conditions we want to loop through
+positives=make.class.target.list(meta3[allinvitro, , drop=F], "Condition")
+
+
+if(comp.type=="all peaks"){
+dds.invitro= dds[,allinvitro] #case 1: include all peaks
+}else{
+dds.invitro= dds[selected.peaks ,allinvitro] #case 2: only include selected peaks in the DE calculation
+}
+
+
+rng=1:(length(positives))
+par.deseq2.invitro.eachvstarget=parallel::mclapply(rng, function(x, dd, allpos, pd, ct){
+  
+  lab=names(allpos)[x]
+  if(lab==ref){
+  return(NULL)
+  }else{
+  classvar="Condition"
+  levs=c(lab, ref)
+  is.target= function(x, targets) fifelse(x %in% targets, levs[1], levs[2])
+  
+  
+simpleCache::simpleCache(paste0("deseq2_invitro_batches_id_", comparison.id, "_",lab, "_vs_",ref, "_comparedpeaks", comp.type) %>% addversion, {
+  
+
+dd[[paste0("target_vs_",ref)]] <- factor(is.target(dd[[classvar]], allpos[[x]]$targets), levels=levs)
+
+
+################################################################################
+# custom filtering
+################################################################################
+
+
+# Re-run the DESeq pipeline with the new condition
+design(dd) <- as.formula(paste0("~target_vs_", ref))
+dd <- DESeq(dd)  
+res <- results(dd, contrast = c(paste0("target_vs_", ref), levs[1], levs[2]))  
+
+ }, assignToVar="res", recreate=T)
+
+  return(res %>% as.data.frame %>% dplyr::mutate(id=!!comparison.id))
+  }
+  },allpos=positives,dd=dds.invitro,ct=comp.type, mc.cores=cores, mc.cleanup=T) %>% givename(., names(positives[rng]))
+
+}) %>% givename(., paste0("dataset", 1:length(test.ids.list)) )
+  }) %>% givename(., comp.types)
+alldes  
+}
+
+
+de.matches.invitro.workflow.sepbatches2=function(envlist, recreate=F, ref=config$target_cell_type, refvar="celltype", reload=T, cores=1,comparison.id=paste0("vs", refvar, "_", ref) , selected.conditions="all"){
+
+  dds=envlist$dds
+  meta2=envlist$meta2
+  dataset.info=envlist$dataset.info
+  selected.peaks=envlist$selected.peaks
+  
+  #meta3=conditional.suffix(meta2, search.var="dsname", target.var="Condition", pattern="Seruggia2025-3", suf="v")
+  meta3=meta2
+  colData(dds)= DataFrame(meta3)
+  
+  
+## we can compare to all peaks or to selected peaks (concordance peaks)
+  #comp.types=c("all peaks", "selected peaks")
+  
+# go through each comparison type   
+#alldes=lapply(comp.types, function(comp.type){  
+ # go through each comparison type and each batch 
+ 
+    if(selected.conditions!="all"){
+      test.ids.list2= lapply(test.ids.list, function(x) x[x %in% selected.conditions])
+    }else{
+     test.ids.list2=test.ids.list 
+    }
+      
+  
+  alldes=lapply(1:length(test.ids.list2), function(k){
+    
+    if(!all(is.null(test.ids.list2[[k]]))){
+
+ #isolate the experiments of this one  batch together with the reference samples
+allinvitro= colData(dds) %>% as.data.frame %>% dplyr::filter((Experiment %in%  test.ids.list2[[k]])|grepl(ref,!!sym(refvar)) ) %>% arrange(round) %>% pull(Experiment)
+
+# for the selected experiments, make a list of all existing conditions we want to loop through
+positives=make.class.target.list(meta3[allinvitro, , drop=F], "Condition")
+
+
+if(!is.null(selected.peaks)){
+
+dds.invitro= dds[selected.peaks ,allinvitro] #case 2: only include selected peaks in the DE calculation
+}
+
+rng=1:(length(positives))
+
+par.deseq2.invitro.eachvstarget=parallel::mclapply(rng, function(x, dd, allpos, rld,ct){
+  
+  
+simpleCache::simpleCache(paste0("deseq2_invitro_sepbatches2_id_", comparison.id, "_vs_",ref, "_comparedpeaks", ct) %>% addversion, {
+
+ dd[[refvar]] <- factor(dd[[refvar]]) 
+  ## in this version the design is literally per condition in the batch
+design(dd) <- as.formula(paste0("~", refvar))
+dd <- DESeq(dd)  
+dd
+ }, assignToVar="dds.invitro", reload=rld)
+  
+
+  
+  lab=names(allpos)[x]
+  if(lab==ref){
+  return(NULL)
+  }else{
+  classvar="Condition"
+  levs=c(lab, ref)
+  is.target= function(x, targets) fifelse(x %in% targets, levs[1], levs[2])
+
+res <- results(dd, contrast = classvar, levs[1], levs[2])  
+
+  return(res %>% as.data.frame %>% dplyr::mutate(id=!!comparison.id, target=lab, reference=ref))
+  
+  }},allpos=positives,dd=dds.invitro,rld, reload, ct=comp.type, mc.cores=cores, mc.cleanup=T) %>% givename(., names(positives[rng]))
+
+par.deseq2.invitro.eachvstarget
+   
+}else{return(NULL)}
+
+
+  }) %>% givename(., paste0("dataset", 1:length(test.ids.list2)) )
+ 
+
+    
+alldes  
+}
+
+
+
+
+
+
+
+de.matches.invitro.workflow.sepbatches2=function(envlist, recreate=F, ref=config$target_cell_type, refvar="celltype",
+                                                 reload=T, cores=1, comparison.id=paste0("vs", refvar, "_", ref),
+                                                 selected.conditions="all", test.ids.list){
+
+  fcat("test: beginning\n")
+
+  dds=envlist$dds
+  meta2=envlist$meta2
+  dataset.info=envlist$dataset.info
+  selected.peaks=envlist$selected.peaks
+
+  fcat("test: envlist loaded\n")
+
+  meta3=meta2
+  colData(dds)= DataFrame(meta3)
+
+  fcat("test: colData assigned\n")
+
+  # selected conditions filtering
+  if(selected.conditions!="all"){
+    fcat("test: filtering selected conditions\n")
+    test.ids.list2= lapply(test.ids.list, function(x) x[x %in% selected.conditions])
+  } else {
+    test.ids.list2=test.ids.list 
+  }
+
+  fcat("test: test.ids.list2 prepared, length = ", length(test.ids.list2), "\n")
+
+  alldes=lapply(1:length(test.ids.list2), function(k){
+
+    fcat("test: starting dataset index k = ", k, "\n")
+
+
+
+      # isolate invitro experiments
+      allinvitro= meta3 %>% as.data.frame %>%
+        dplyr::filter((Experiment %in%  test.ids.list2[[k]]) | grepl(ref, !!sym(refvar))) %>%
+        arrange(round) %>% pull(Experiment)
+
+      fcat("test: allinvitro computed", paste(allinvitro, collapse=","), "\n")
+      
+          if(length(allinvitro)>1){
+
+      fcat("test: entering batch loop for k = ", k, "\n")
+      
+      
+
+      # generate positives
+      positives=make.class.target.list(meta3[allinvitro, , drop=F], "Condition")
+
+      fcat("test: positives generated, length = ", length(positives), "\n")
+
+      # subset peaks if provided
+      if(!is.null(selected.peaks)){
+        fcat("test: subsetting selected.peaks\n")
+        dds.invitro= dds[selected.peaks ,allinvitro]
+        fcat("test: dds.invitro subset done\n")
+      }
+
+      rng=1:(length(positives))
+      fcat("test: rng defined, size = ", length(rng), "\n")
+
+      par.deseq2.invitro.eachvstarget=parallel::mclapply(
+        rng,
+        function(x, dd, allpos, rld, ct){
+          fcat("test: mclapply iteration x = ", x, "\n")
+
+          simpleCache::simpleCache(
+            paste0("deseq2_invitro_sepbatches2_id_", comparison.id, "_vs_",ref, "_comparedpeaks", ifelse(is.null(ct), "all", digest::digest(ct))) %>% addversion,
+            {
+              fcat("test: inside simpleCache block, x = ", x, "\n")
+
+              dd[[refvar]] <- factor(dd[[refvar]])
+              design(dd) <- as.formula(paste0("~", refvar))
+              fcat("test: DESeq design set\n")
+
+              dd <- DESeq(dd)
+              fcat("test: DESeq completed for x = ", x, "\n")
+
+              dd
+            },
+            assignToVar="dds.invitro", reload=rld
+          )
+
+          lab=names(allpos)[x]
+          fcat("test: lab = ", lab, "\n")
+
+          if(lab==ref){
+            fcat("test: lab equals ref, returning NULL\n")
+            return(NULL)
+          } else {
+            classvar="Condition"
+            levs=c(lab, ref)
+
+            res <- results(dd, contrast=classvar, levs[1], levs[2])
+            fcat("test: results extracted for lab = ", lab, "\n")
+
+            return(res %>% as.data.frame %>% dplyr::mutate(id=!!comparison.id, target=lab, reference=ref))
+          }
+
+        },
+        allpos=positives,
+        dd=dds.invitro,
+        rld=reload,
+        ct=selected.peaks,
+        mc.cores=cores,
+        mc.cleanup=T
+      ) %>% givename(., names(positives[rng]))
+
+      fcat("test: mclapply finished for k = ", k, "\n")
+
+      par.deseq2.invitro.eachvstarget
+
+    } else {
+      fcat("test: NULL test.ids.list2[[k]]\n")
+      return(NULL)
+    }
+
+  }) %>% givename(., paste0("dataset", 1:length(test.ids.list2)))
+
+  fcat("test: alldes finished\n")
+
+  alldes
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+de.matches.invitro.workflow.lineage=function(envlist, recreate=F, ref=config$target_cell_type, lineage=c("CMP","MEP"), refvar="celltype", reload=T, cores=10, comparison.id=paste0("vs", refvar, "_", ref)){
+
+#this function includes  several relevant samples from the target lineage, those whose differentiall gene expression may be relevant to quantify variation in the discordant regions.   
+  
+  dds=envlist$dds
+  meta2=envlist$meta2
+  dataset.info=envlist$dataset.info
+  
+  meta3=conditional.suffix(meta2, search.var="dsname", target.var="Condition", pattern="Seruggia2025-3", suf="v")
+  
+  colData(dds)= DataFrame(meta3)
+  
+ lapply(1:length(test.ids.list), function(k)  {
+  
+  ### perform the DE , test dataset versus dataset 
+refs= paste(c(ref, lineage), collapse="|")   
+
+allinvitro= colData(dds) %>% as.data.frame %>% dplyr::filter((Experiment %in%  test.ids.list[[k]])|grepl(refs,!!sym(refvar)) ) %>% arrange(round) %>% pull(Experiment)
+
+
+positives=make.class.target.list(meta3[allinvitro, , drop=F], "Condition")
+
+
+#dds.invitro= dds[,allinvitro] #case 1: include all peaks
+dds.invitro= dds[Reduce(c, concordance.peaks) %>% unique ,allinvitro] #case 2: only include concordance peaks in the DE calculation
+rng=1:(length(positives))
+par.deseq2.invitro.eachvstarget=parallel::mclapply(rng, function(x, dd, allpos, pd){
+  
+  lab=names(allpos)[x]
+  if(lab==ref){
+    
+  return(NULL)
+  }else{
+  classvar="Condition"
+  levs=c(lab, ref)
+  is.target= function(x, targets) fifelse(x %in% targets, levs[1], levs[2])
+  
+  
+simpleCache::simpleCache(paste0("deseq2_invitro_validate_target-",lab, "_vs_",ref, "_positivesid", digest::digest(allpos),"_ddsid_",digest::digest(dd),  "analysis", analysis.version), {
+  
+
+dd[[paste0("target_vs_",ref)]] <- factor(is.target(dd[[classvar]], allpos[[x]]$targets), levels=levs)
+
+# Re-run the DESeq pipeline with the new condition
+design(dd) <- as.formula(paste0("~target_vs_", ref))
+dd <- DESeq(dd)  
+res <- results(dd, contrast = c(paste0("target_vs_", ref), levs[1], levs[2]))  
+
+ }, assignToVar="res", reload=reload)
+
+  return(res %>% as.data.frame %>% dplyr::mutate(id=!!comparison.id))
+  }
+  },allpos=positives,dd=dds.invitro, mc.cores=cores, mc.cleanup=T) %>% givename(., names(positives[rng]))
+
+}) %>% givename(., paste0("dataset", 1:length(test.ids.list)) )
+}
+
+
+
+
+targeted.changes.analysis=function(delist, concordance.peaks, exclude=NULL, pval=0.05, thr=0.2, filter=F, facet="treatment"){
+  null.elements=lapply(delist, is.null) %>% unlist
+  fcat("removing the following null elements: ", paste(names(null.elements[null.elements]), collapse=","))
+  
+delist=delist[ !null.elements %>% unname]
+
+  
+  
+check.concordance=function(x){
+ifelse(x %in% concordance.peaks.unique$concordant.open, "concordant.open", 
+  ifelse(x %in% concordance.peaks.unique$discordant, "discordant", 
+    ifelse(x %in% concordance.peaks.unique$concordant.closed, "concordant.closed", "other")))
+}
+  
+  
+demat.concord<-lapply(1:length(delist), function(x)  delist[[x]] %>% as.data.frame %>% dplyr::filter(abs(log2FoldChange)>=thr, pvalue<=pval) %>% names2col(., "Geneid") %>% dplyr::mutate(treatment=names(delist)[x], effect=ifelse(log2FoldChange>=1, "differentially open", "differentially closed"), is.discordant= Geneid %in% concordance.peaks$discordant, is.concordant.open=Geneid %in% concordance.peaks$concordant.open, is.concordant.closed=Geneid %in% concordance.peaks$concordant.closed) %>% arrange(log2FoldChange) %>% dplyr::mutate(concordance=check.concordance(Geneid))) %>% Reduce(rbind, .)
+
+
+demat.depeaks= demat.concord %>% group_by(treatment, concordance) %>% summarise(counts=n())
+
+
+if(!is.null(exclude)){
+  demat.concord=demat.concord %>% dplyr::filter(!(treatment %in% exclude))
+}
+
+
+
+demat.summary= demat.concord %>% group_by(treatment, effect) %>% summarise(percent.discordant=sum(is.discordant)/length(concordance.peaks$discordant), percent.concordant.open=sum(is.concordant.open)/length(concordance.peaks$concordant.open), percent.concordant.closed=sum(is.concordant.closed)/length(concordance.peaks$concordant.closed))
+
+
+demat.tidy=pivot_longer(demat.summary, contains("percent"), names_to="type", values_to="percentage") %>% as.data.frame %>% dplyr::mutate(percentage.=ifelse(effect=="differentially closed", -percentage, percentage), type=gsub("percent.", "", type))
+
+plt=ggplot(demat.tidy, aes(y=factor( type, levels=c("discordant", "concordant.closed", "concordant.open") %>% rev), x=percentage., fill=effect))+geom_col()+facet_wrap(~treatment, ncol=1, scale="free_y")+scale_fill_manual(values=c("differentially closed"="red", "differentially open"="cyan"))+theme_classic()
+
+plt=ggplot(demat.tidy, aes(y=treatment, x=percentage., fill=effect))+geom_col()+facet_wrap(as.formula(~factor(type, levels=c("concordant.open", "discordant", "concordant.closed") )), ncol=1, scale="free_y")+scale_fill_manual(values=c("differentially closed"="red", "differentially open"="cyan"))+theme_classic()
+
+plt2=ggplot(demat.concord %>% dplyr::filter(!is.na(concordance)), aes( x=log2FoldChange, fill=concordance))+geom_density(alpha=0.5)+facet_wrap(as.formula(~factor(treatment)), ncol=1, scale="free_y")
+#+scale_fill_manual(values=c("differentially closed"="red", "differentially open"="cyan"))+theme_classic()
+
+list(df.tidy=demat.tidy, df=demat.concord, plot.percentages=plt, plot.effectsizes=plt2, df.depeaks=demat.depeaks)
+}
+
+
+
+
 
 
 umap.louvain.clustering <- function(umap_result, resolution=1) {
@@ -7787,7 +8190,7 @@ get.sample.coords= function(k, extend.from.center=NULL, cols.per.sample){
  startpoint=cols.per.sample*(k-1)+1
  endpoint=cols.per.sample*k
   
- if(!is.null(extend.from.center)){
+ if(is.null(extend.from.center)){
    ctr=round((endpoint-startpoint)/2)
    
    (ctr-extend.from.center):(ctr+extend.from.center)
@@ -7943,6 +8346,56 @@ while(cc< nrow(matt)){ # go on while section is not reached
     sectionmatt
  }
   
+
+read.deeptools=function(dtp, annotation.peaks, masks=list()){
+  
+  matfile=dtp$path.matrix 
+  matfile.heatmap=dtp$path.heatmap.matrix
+  matfile.sortedregions=dtp$path.sortedregions
+  nsamples=length(dtp$all.bigwigs)
+
+    
+
+library(uwot)
+library(igraph)
+#library(leiden)
+# import the matrix
+fcat("importing matrices")
+matfile=matfile %>% prep.dir.for.in.root
+matfile.heatmap= matfile.heatmap %>% prep.dir.for.in.root
+matfile.sortedregions= matfile.sortedregions %>% prep.dir.for.in.root
+
+matt=fread(file=matfile, header=F)
+matth=fread(file=matfile.heatmap, header=F) %>% as.data.frame
+matts=fread(file=matfile.sortedregions, header=T) %>% as.data.frame
+
+
+simpleCache(paste0("reordered_peaks_annotated_matrixid", digest::digest(matts)) %>% addversion, {
+matts.annotated=add.peak.annotation.to.mat(matts)
+}, assignToVar="matts.annotated", reload=T)
+
+relevant.cols= 7:ncol(matth)
+matth.annotation=matth[, 1:6]
+matth=matth[rownames(matts), relevant.cols]
+
+
+list(
+  matth=matth, 
+  matth.annotation=matth.annotation,
+  matts=matts.annotated
+)}
+ 
+#
+
+
+#deeptools.sample.umap(1, 30, ncomp=10, md=1)
+
+################################################################################
+#make a umap now with each peak containing the information of multiple samples at once
+################################################################################
+
+
+
 
 
 ################################################################################
@@ -8281,7 +8734,7 @@ random.forest.workflow= function(envlist, dataset.info, recreate=F){
 
   
 config=dataset.info  
-test.datasets=dataset.info$dataset_name[as.logical(dataset.info$is_protocol)]
+test.datasets=dataset.info$dataset_name[as.logical(dataset.info$is_test)]
 allcolors=envlist$allcolors
 pca.data=envlist$pca.data
 refids=envlist$refids
@@ -8296,7 +8749,7 @@ generic.pc.list=paste0("PC", 1:length(envlist$refids))
 
  
 # Train the Random Forest classifier
-traininglevels=intersect(names(allcolors[[dataset.info$cell_type_variable]]), unique(pca.data[refids,dataset.info$cell_type_variable ]))   
+traininglevels=intersect(names(allcolors[[dataset.info$cell_type_variable]]), unique(pca.data[refids,"Condition" ]))   
 fcat(traininglevels)
 
 simpleCache(paste_("randomforest_model_seed",config$randomseed, "initialcomponents", config$randomforest_initial_components, "target",config$cell_type_variable, "testds_",paste(test.datasets, collapse="-"),"version", analysis.version), { 
@@ -8304,7 +8757,7 @@ simpleCache(paste_("randomforest_model_seed",config$randomseed, "initialcomponen
 rf_model <- randomForest(x = pca.data[refids, generic.pc.list], y = factor(pca.data[refids, config$cell_type_variable], levels=traininglevels ), ntree = config$randomforest_ntrees)
 
 rf_model
-}, assignToVar="rf_model", reload=T)
+}, assignToVar="rf_model", reload=!recreate, recreate=recreate)
 
 # Print the trained model
 print(rf_model)
@@ -8313,7 +8766,7 @@ rf.err.rate.generic=rf_model$err.rate[nrow(rf_model$err.rate), "OOB"]
 
 confusion.training=rf_model$confusion %>% as.data.frame %>% dplyr::select(-class.error)
 confusion.training2=lapply(1:nrow(confusion.training), function(x) confusion.training[x, ]/sum(confusion.training[x,])) %>% Reduce(rbind,. )
-
+fcat("checkpoint A")
 
 sca=1.5
 rr=600
@@ -8329,6 +8782,7 @@ var_importance <- importance(rf_model)
 print(var_importance)
 
 # Plot variable importance
+fcat("checkpoint B")
 sca=1.5
 var_imp_plot <- varImpPlot(rf_model)
 arr.varimp <- var_imp_plot %>% as.data.frame %>% names2col(., "PC")%>% dplyr::mutate(rank=1:n()) %>% dplyr::filter(MeanDecreaseGini>=1, rank<=20) %>% arrange(MeanDecreaseGini)
@@ -8343,6 +8797,7 @@ print(
 dev.off()
 #var_imp_plot
 ####prediction of test samples
+fcat("checkpoint C")
 test_data=pca.data %>% filter(dsname %in% test.datasets) %>% dplyr::select( all_of(generic.pc.list))
 
 testids=pca.data %>% filter(dsname %in% test.datasets)  %>% arrange(tmnt.full) %>% rownames
@@ -8369,26 +8824,28 @@ dev.off()
 
 hmpprobs.generic
 
+fcat("checkpoint D")
 ################################################################################
 # selecting pcs based on their Mean decrease Gini
 ################################################################################
 var.importance.arranged=var_importance %>% as.data.frame %>% arrange(-MeanDecreaseGini)
 
-simpleCache(paste0("informative.pcs_rfmodel", digest::digest(rf_model), "analysisversion_", analysis.version), {
+#for versions before 20250810, use onlly rf_model inside digest
+simpleCache(paste0("informative.pcs_rfmodel", digest::digest(list(rf_model, dataset.info)), "analysisversion_", analysis.version), {
 informative.pcs=rownames(var.importance.arranged)[var.importance.arranged>=gini.threshold]
-informative.pcs}, assignToVar="informative.pcs",reload=T) 
+informative.pcs}, assignToVar="informative.pcs",reload=!recreate) 
 
-
+fcat("checkpoint E")
 ################################################################################
 # use the informative  pcs togenerate a second cleaner model with sleected features
 ################################################################################
 
 
-simpleCache(paste_("randomforest_model_informativepcs_seed",config$randomseed, "components", config$randomforest_initial_components, paste(informative.pcs, collapse="-"), "target",config$cell_type_variable, "testds_",paste(test.datasets, collapse="-"),"version", analysis.version), { 
+simpleCache(paste_("randomforest_model_informativepcs_seed",config$randomseed, "components", config$randomforest_initial_components,"gini", dataset.info$randomforest_gini_threshold, digest::digest(informative.pcs), "target",config$cell_type_variable, "testds_",paste(test.datasets, collapse="-"),"version", analysis.version), { 
 
 rf_model_informative <- randomForest(x = pca.data[refids, informative.pcs], y = factor(pca.data[refids, config$cell_type_variable], levels=traininglevels), ntree = config$randomforest_ntrees)
 rf_model_informative
-}, assignToVar="rf_model_informative", reload=T)
+}, assignToVar="rf_model_informative", reload=!recreate)
 
 
 
@@ -8399,7 +8856,7 @@ print(rf_model_informative)
 confusion.trainingi=rf_model_informative$confusion %>% as.data.frame %>% dplyr::select(-class.error)
 confusion.training2i=lapply(1:nrow(confusion.trainingi), function(x) confusion.trainingi[x, ]/sum(confusion.trainingi[x,])) %>% Reduce(rbind,. )
 
-
+fcat("checkpoint 1")
 sca=1.5
 rr=600
 hm.training.informative=ComplexHeatmap::pheatmap(confusion.training2i[traininglevels, traininglevels], cluster_col=F, cluster_row=F, main=paste0("Training set (Informative PCs). Error:", rf.err.rate.informative))
@@ -8407,7 +8864,7 @@ tpdf(path=config$plotpath, "heatmap_randomForest_trainingset_confusionmatrix_inf
 print(hm.training.informative)
 dev.off()
 print(hm.training.informative)
-
+fcat("checkpoint 2")
 # Get variable importance
 var_importancei <- importance(rf_model_informative)
 
@@ -8430,8 +8887,8 @@ conf_matrixi <- table(Actual = rownames(test_data), Predicted = predictionsi)
 # Define the range for the color bar
 # For example, we want the colors to range from -2 to 2
 #breaks <- seq(0, 1, length.out=101)
-edm2.samples=pca.data %>% dplyr::filter(dsname %in% test.datasets, tmnt2!="NANANA") %>% rownames
-edm1.samples=pca.data %>% dplyr::filter(dsname %in% test.datasets,tmnt2=="NANANA") %>% rownames
+edm2.samples=pca.data %>% dplyr::filter(dscategory=="test", tmnt2!="nt") %>% rownames
+edm1.samples=pca.data %>% dplyr::filter(dscategory=="test",tmnt2=="nt", tmnt.full!="nt_nt") %>% rownames
 
 
 ery.order.edm1=predictions.probi[edm1.samples, "Ery"] %>% sort(., decreasing=T) %>% names
@@ -8443,11 +8900,14 @@ hm.inf1=ComplexHeatmap::pheatmap(predictions.probi[ery.order.edm1, traininglevel
 hm.inf2=ComplexHeatmap::pheatmap(predictions.probi[ery.order.edm2,traininglevels ], cluster_col=F, cluster_row=F, main="test prediction probabilities", annotation_row=pca.data[ery.order.edm2, dataset.info$annotvars ] %>% dplyr::mutate(rbc.round1=factor(rbc.round1)), annotation_colors = allcolors, show_rownames = F, breaks=seq(0,.3,.02))
 
 #round(edm1.samples/nrow(predictions.probi))
-tpdf(path=config$plotpath, paste0("heatmap_randomForest_test_EDM1_predictionprobs_informativepcs_analysisversion", analysis.version), wi=pw*sca*1.5, he=pw*sca)
+
+fcat("checkpoint 3")
+tpdf(path=config$plotpath, paste0("heatmap_randomForest_test_EDM1_predictionprobs_informativepcs_analysisversion", analysis.version), wi=pw*sca*1.5, he=pw*sca*1.5)
 print(hm.inf1)
 dev.off()
 
-tpdf(path=config$plotpath, paste0("heatmap_randomForest_test_EDM2_predictionprobs_informativepcs_analysisversion", analysis.version), wi=pw*sca*1.5, he=pw*sca)
+fcat("checkpoint 4")
+tpdf(path=config$plotpath, paste0("heatmap_randomForest_test_EDM2_predictionprobs_informativepcs_analysisversion", analysis.version), wi=pw*sca*1.5, he=pw*sca*1.5)
 print(hm.inf2)
 dev.off()
 
@@ -8721,19 +9181,22 @@ dump.table=function(x, ...){
 
 }
 
-dump.table2=function(x, ...){
-  variable_name <- deparse(substitute(x))
-  fwrite(x, file=paste0("~/mnt_out/metadata/", variable_name, ".csv"), ...)
-
-}
-
 ###############################################################################
 # seriate columns of a matrix
 ##############################################################################
 
 seriatecols=function(x) x[,seriation::get_order(seriation::seriate(x, margin=2, method="PCA"))]
 
-seriaterows=function(x) x[seriation::get_order(seriation::seriate(x, margin=1, method="PCA")),]
+seriaterows=function(x, reverse.order=F){ 
+  
+  ord=seriation::get_order(seriation::seriate(x, margin=1, method="PCA"))
+  if(reverse.order){
+    ord=rev(ord)
+  }
+  x[ord,]
+ 
+   
+}
 
 cumulative.lengths <- function(lst) {
   # Calculate the lengths of each vector
@@ -8748,6 +9211,55 @@ cumulative.lengths <- function(lst) {
   
   return(cumulative)
 }
+
+
+################################################################################
+# generate letter aliases for values in a column (to use as proxy for treatment)
+################################################################################
+
+make_alias <- function(df, colname, na.values="NA", na.replaceby=NA, replace=T) {
+  # Ensure colname is treated as a string
+  col <- df[[colname]]
+  
+  # Get unique sorted values
+
+  uniq_vals <- unique(col)
+   uniq_vals <- uniq_vals[!(uniq_vals %in% na.values)] 
+     uniq_vals <- sort(uniq_vals)
+ 
+  # Generate letter aliases (handles >26 values too)
+  n <- length(uniq_vals)
+  aliases <- sapply(seq_len(n), function(i) {
+    catalog=c(LETTERS, paste0(LETTERS,"II"),paste0(LETTERS,"III") )
+
+    excel_style <- catalog[i]
+    excel_style
+  })
+  
+  
+  # Map values to aliases
+  alias_map <- setNames(aliases, uniq_vals)
+  
+  
+ alias_map <- c(alias_map, rep(na.replaceby, length(na.values)) %>% givename(., na.values))
+ 
+ fcat(dput(alias_map))
+  
+ 
+ if(replace){
+   #we store the original column with an extension
+     new_colname <- paste0(colname, "_original")
+  df[[new_colname]] <-df[[colname]]
+   df[[colname]] <-alias_map[as.character(col)]
+ }else{
+  # Create new alias column
+  new_colname <- paste0(colname, "_alias")
+  df[[new_colname]] <- alias_map[as.character(col)]
+ }
+ 
+  return(df)
+}
+
 
 ################################################################################
 # function to generate treatment columns
@@ -8810,7 +9322,7 @@ generate_treatment_columns2 <- function(data) {
   # Add the "round" column
   data$round <- apply(data[tmnt_cols], 1, function(row) {
     # Determine the last non-"NANANA" column
-    last_non_na_round <- max(which(row != "NANANA"), na.rm = TRUE)
+    last_non_na_round <- max(which(row != "NANANANANA"), na.rm = TRUE)
     if (is.finite(last_non_na_round)) {
       paste0("Round", last_non_na_round)
     } else {
@@ -8819,6 +9331,73 @@ generate_treatment_columns2 <- function(data) {
   })
   
   return(data)
+}
+
+
+
+################################################################################
+#
+################################################################################
+
+
+generate_treatment_columns3<- function(pd, dataset.info){
+  pca.data <-pd
+all.reagent.cols=dataset.info$reagents
+treatment.id.cols=dataset.info$treatment_id_cols
+#infer the number of steps in the experiment
+treatment.steps= strsplit(all.reagent.cols, split="\\.") %>% lapply(., function(x) x[length(x)]) %>% unlist %>% unique
+
+
+
+## collect all treatment reagents per step
+treatments.list=lapply(treatment.steps, function(x){
+  l=list(
+  reagents=all.reagent.cols[grepl(x, all.reagent.cols)]
+  )
+  l
+}) %>% givename(., treatment.steps)
+
+#input is the number of the treatment round
+get.treatment.na= function(tn){
+rep(NA, length(treatments.list[[tn]]$reagents)) %>% paste(.,collapse="" )  
+}
+
+
+
+newcols=list()
+#newcols.aliases=list()
+for(k in 1:length(treatments.list)){
+fcat("loop ", k)
+  coln=paste0("tmnt", k)
+  pca.data=pca.data %>% dplyr::mutate(!!sym(coln) := apply(select(., all_of(treatments.list[[k]]$reagents)), 1, function(x) paste(x, collapse="")))
+  
+  #make human readable aliases for the  treatment
+  pca.data=pca.data %>% make_alias(., coln, na.values=get.treatment.na(k), na.replaceby="nt", replace=T) #make an alias but store the original
+newcols[[k]]=coln
+#newcols.aliases[[k]]=paste0(coln, "_alias")
+  }
+
+
+newcols= newcols %>% Reduce(c, .)
+
+treatments.list= treatments.list %>% givename(., newcols)
+
+################################################################################
+# make round column
+################################################################################
+pca.data$round= lapply(newcols, function(k){
+  ifelse(pca.data[[k]]==get.treatment.na(k),0,1) 
+}) %>% bind_cols %>% as.data.frame %>% givecolnames(.,nms=newcols) %>% rowSums
+
+make.round.text=function(rnd) ifelse(is.na(rnd), NA, paste0("Round", rnd))
+pca.data$round= make.round.text(zero2na(pca.data$round))
+
+
+
+pca.data= pca.data %>% dplyr::mutate(tmnt.full=apply(select(., all_of(newcols)), 1, paste, collapse = "_"), celltype=ifelse(dscategory=="reference",Condition, as.character(dsname)))
+
+pca.data
+
 }
 
 
@@ -9056,7 +9635,7 @@ make.cache.code <- function(var, tt, varstring)  {
 make.hyper.barplot=function(hdf, genesets=c("LIGPERTDOWN", "LIGPERTLINCSDN"), numbars=10, color="violet",  x="jaccard_index", colorvar="clusterlabel"){
 prep.df=hdf %>% dplyr::filter(tlog.pval>0, geneset %in% !!genesets) %>% group_split(geneset, clusterlabel) %>% lapply(., function(x) x %>% arrange(-jaccard_index) %>% group_by(geneset) %>%  dplyr::mutate(rank=1:n(), cpval=categorize.p.value(pval)) %>% head(numbars)) %>% Reduce(rbind, .) %>% as.data.frame
 
- bp= ggplot(prep.df, aes(x=rank,  y=!!sym(x)) )+geom_col( alpha=0.7, aes(aes(fill=!!sym(colorvar)))+geom_text(inherit.aes=F, label=original.label, x=rank,hjust=0, y=0 ))+
+ bp= ggplot(prep.df, aes(x=rank,  y=!!sym(x)) )+geom_col( alpha=0.7, aes(fill=!!sym(colorvar)))+geom_text(inherit.aes=F, aes(label=original.label, x=rank),hjust=0, y=0 )+
    #geom_text(inherit.aes=F, color="white",aes(label=hits, x=rank,hjust=0, y=0 ,vjust=-.5))+
   rotatex(90)+
    #scale_fill_viridis(option="C")+
@@ -9118,1865 +9697,172 @@ prep.df=hdf %>% dplyr::filter(tlog.pval>0, geneset %in% !!genesets) %>% group_sp
 }
 
 
-################################################################################
-# prepare cache command
-################################################################################
-
-make.cache.name<- function(title, analysis.version=config$analysis.version, varlist) {
-  # Capture additional named arguments
-  argnames<- names(varlist)
-  # Format each variable as "nameValue"
-  args_formatted <- lapply(1:length(argnames), function(nm) paste_(argnames[nm], varlist[[nm]]))
-  
-  # Concatenate all components with "_"
-  filename <- paste(c(title, args_formatted, 'analysisversion', analysis.version), collapse = "_")
-  
-  return(filename)
-}
 
 
-
-################################################################################
-# recreation/ reloading controls
-################################################################################  
-fullrecreate.list=list(
-  cors=T,
-  rgeneposint=T,
-  fulltable=T
-)
-
-fullreload.list=list(
-  cors=F,
-  rgeneposint=F,
-  fulltable=F)
-
-fullrecreate=function(x){
-  
-  if(!(x %in% names(fullrecreate.list))){
-    return(F)
-  }else{return(fullrecreate.list[[x]])}
-}
-
-fullreload=function(x){
-  
-  if(!(x %in% names(fullreload.list))){
-    return(T)
-  }else{return(fullreload.list[[x]])}
-}  
-
-
-################################################################################
-# get var name
-################################################################################
-
-getvarname=function(var) deparse(substitute(var))
-
-#########################################
-# clinical data formatting functions
-#########################################
-
-
-
-pctile= function(varname, val){
- vals=gpcdf %>% pull(!!sym(varname))
-  dd= ecdf(vals) 
-  v=dd(val)
-  
-  v
-}
-
-classify= Vectorize(function(v, lowthresh, topthresh, label.high="high", label.med="med", label.low="low"){
-  if (v>topthresh){return(label.high)}else{
-  if (v<lowthresh){return(label.low)}else{
-  return(label.med) }}
-}, USE.NAMES=F)
-
-classify.percentiles=function(vec, lowthresh, topthresh,  label.high="high", label.med="med", label.low="low"){
-
-    classify(ecdf(vec)(vec),lowthresh, topthresh, label.high=label.high, label.med=label.med, label.low=label.low)
- 
-       
-}
-
-# classify <- function(x, low_thresh, high_thresh) {
-#   if (!is.numeric(x) || !is.numeric(low_thresh) || !is.numeric(high_thresh)) {
-#     stop("All inputs must be numeric.")
-#   }
-#   
-#   if (low_thresh > high_thresh) {
-#     stop("low_thresh should be less than or equal to high_thresh.")
-#   }
-#   
-#   # Use vectorized conditions
-#   classification <- ifelse(x < low_thresh, "low",
-#                     ifelse(x <= high_thresh, "med", "high"))
-#   
-#   return(classification)
-# }
-# 
-
-
-format.censoring=Vectorize(function(x) if(x=="Censored"){return(0)}else{
-  if(x %in% c("Event", "Progression", "Relapse", "Death")){return(1)}
-  }, USE.NAMES=F)
-
-
-
-
-add.vital.status=function(x){
- if(!("Vital_Status" %in% colnames(x))){
-x= x %>% mutate(Vital_Status=format.status(death.from.disease))
- }
-   x
-}
-
-
-
-harmonise.colname= function(df, name.options, target.name){
-   df %>% dplyr::mutate(!!sym(target.name) := df[, name.options[data.table::first(which(name.options %in% colnames(df))) ]])
-    
-    }
-
-
-format.r2.meta<- function(met){ met2=met %>% t; data.frame(data=met2[3:nrow(met2),]) %>% givecolnames(., nms=make.names(met2[1,]))}
-
-
-
-
-harmonise.values <- function(df, search, renameto, lst=NULL, default.to=NA, replace=F) {
-
-#check if the output column already exists
-  duplicate_positions <- which(names(df) == renameto)
-  
-  if(length(duplicate_positions) > 0 && replace==F){
-      warning(sprintf("Column %s already found. returning as is.",renameto) )
-      return(df)
+shift.last.first <- function(vec) {
+  if (length(vec) <= 1) {
+    return(vec)  # No change needed for empty or single-element vectors
   }
-  
-  # Check if there are duplicates
-  if (length(duplicate_positions) > 1) {
-    warning(
-      sprintf("Duplicate column names found for '%s' at positions: %s", 
-              renameto, paste(duplicate_positions, collapse = " ")))
-        df2 <- df[, duplicate_positions, drop = FALSE]
-          df[,duplicate_positions[1:length(dupicate_positions)]]=NULL
-    
+  c(tail(vec, 1), head(vec, -1))
+}
+
+pairs.from.vectors <- function(vec1, vec2) {
+  if (length(vec1) != length(vec2)) {
+    stop("Both vectors must have the same length.")
   }
-names(df)=make.unique(names(df))  
-  
-
-# Step 1: Find matching column names
-matched_cols <- names(df)[grepl(paste(search, collapse="|"), names(df))]
-fcat("found matching columns to ", search,":", matched_cols)
-# Step 2: Rename the first matching column (if any) to `renameto`
-if (length(matched_cols) > 0) {
-df=df %>% dplyr::mutate(!!sym(renameto):= !!sym(matched_cols[1]))
-} else {
-fcat("No matching column found in `df` for", search," terms. Defaulting column to", default.to)
-    
-df <- df %>% dplyr::mutate(!!sym(renameto):=NA)
-}
-# Step 3: Replace values in the renamed column using the `lst` lookup
-if (!is.null(lst)) {
-df[[renameto]] <- unlist(lapply(df[[renameto]], function(x) {
-if (x %in% names(lst)) {
-return(lst[[x]])  # Replace if found in `lst`
-} else {
-return(x)  # Keep original if not in `lst`
-}
-}))
-
-
-
-    # if(!is.null(df2) && (renameto %in% colnames(df2))){
-    #     fcat("Warning: duplicate output columns already found in dataframe") 
-    #   df=cbind(df, df2)
-    #   names(df)=make.unique(names(df))
-    # }
-}
-return(df)
-}
-
-
-
-
-
-#############################
-#  find duplicate row name in a matrix, fix them, warn about them and print them to screen
-#############################
-
-fix.duplicate.rownames = function(mat) {
-  # Ensure input is a matrix
-  if (!is.matrix(mat)) stop("Input must be a matrix.")
-  
-  row_names <- rownames(mat)
-  
-  # Find duplicate row names
-  dup_names <- row_names[duplicated(row_names) | duplicated(row_names, fromLast = TRUE)]
-  
-  if (length(dup_names) > 0) {
-    warning("Duplicates found in row names. Modifying them with suffixes...")
-    
-    name_counts <- table(row_names)  # Count occurrences
-    name_index <- setNames(rep(0, length(name_counts)), names(name_counts))  # Track count
-    
-    for (i in seq_along(row_names)) {
-      row_name <- row_names[i]
-      if (name_counts[row_name] > 1) {  # If it's a duplicate
-        name_index[row_name] <- name_index[row_name] + 1
-        new_name <- paste0(row_name, "_dup", name_index[row_name])
-        row_names[i] <- new_name  # Assign new name
-        
-        # Print the modified duplicate row
-        cat(sprintf("Row %d: %s -> %s\n", i, row_name, new_name))
-      }
-    }
-    
-    rownames(mat) <- row_names  # Update row names
-  }
-  
-  return(mat)
-}
-
-
-
-
-make.unique.names = function(vec) {
-  # Count occurrences of each name
-  name_counts <- table(vec)
-  name_index <- setNames(rep(0, length(name_counts)), names(name_counts))  # Track count
-  unique_vec <- vec  # Copy original vector
-  
-  for (i in seq_along(vec)) {
-    name <- vec[i]
-    if (name_counts[name] > 1) {  # If name is duplicated
-      name_index[name] <- name_index[name] + 1
-      unique_vec[i] <- paste0(name, ".dup", name_index[name])
-    }
-  }
-  
-  return(unique_vec)
-}
-
-################################################################################
-# import datasets obtained via r2
-################################################################################
-
-import.r2= function(filename, path=file.path(config$data_root,"bulkrna_patients"), id.col=NULL, dataset.id=paste_("untitled",timestamp(""))){
-    
-lines <- readLines(file.path(path, filename))   
- 
-# Split into two arrays
-fcat("reading file...extracting metadata and gene expression...")
-metadata_lines <- lines[grepl("^#", lines)]    # Lines that start with '#'
-non_comment_lines <- lines[!grepl("^#", lines)] 
-
-fcat("formatting metadata...")
-    
-metadata.df <- as.data.frame(do.call(rbind, strsplit(sub('#','',metadata_lines), "\\t")), stringsAsFactors = FALSE)
-
-metadata.df=format.r2.meta(metadata.df) 
-gc()
-
-fcat("formatting counts...")
-counts<- do.call(rbind, strsplit(non_comment_lines, "\\t"))
-
-counts<- as.data.frame(counts, stringsAsFactors = FALSE)
-counts=counts[2:nrow(counts), , drop=FALSE]  %>% dplyr::select(-2) 
-
-
-rownames(counts)=make.unique.names(counts$V1)
-counts = counts %>% select(-1)
-
-counts=apply(counts, c(1,2), as.numeric)
-
-if(!is.null(id.col)){
-fcat("bringing names from metadata")
-metadata.df<-metadata.df %>% col2names(., id.col) 
-colnames(counts)=rownames(metadata.df)
-}
-
-
-rm(non_comment_lines)
-rm(metadata_lines)
-gc()
-fcat("Done.")
-outlist=list(counts=counts, metadata=metadata.df, dsname=dataset.id)
-}
-
-
-has.survival.data=function(analysis.list){
-    lapply(c('Event_Free_Survival', 'Event_Free_Survival_Time_in_Days', 'Overall_Survival', 'Overall_Survival_Time_in_Days'), function(x)
- ifelse( length(analysis.list$gpcdf[,x ] %>% is.na %>% table %>% names)<2, 0,1)
-) %>% Reduce(c,.)
-}
-
-
-################################################################################
-#signature surivival analysis after calculating singatures
-################################################################################
-format.survival=function(analysis.list, sig, survivaltype, lowthresh, highthresh){
-    
-
-survmat=analysis.list$gpcdf
-
-
-survmat=survmat %>% as.data.frame %>% dplyr::mutate(
-                         Overall_Survival_Time_in_Days=as.integer(Overall_Survival_Time_in_Days),
-                         Event_Free_Survival_Time_in_Days=as.integer(Event_Free_Survival_Time_in_Days),
-                         Overall_Survival_Time_in_Years=Overall_Survival_Time_in_Days/365,
-                         Event_Free_Survival_Time_in_Years=Event_Free_Survival_Time_in_Days/365,
-                         Survival=!!sym(survivaltype), 
-                         Time=!!sym(paste0(survivaltype, "_Time_in_", "Years")),
-                         COG.Risk.Group=ifelse(COG.Risk.Group=="High Risk","High Risk", "Low-intermediate risk")
-                         )
-
-survmat[,"percentile"]=  classify.percentiles(analysis.list$gpcdf[, sig], lowthresh, highthresh)
-percentile.column.name=paste0("percentile.", sig)
-survmat[, percentile.column.name]=survmat[, "percentile"]
-
-survmat}
-
-signature.survival.analysis=function(analysis.list,sigs, lowthresh, highthresh, survivaltype="Overall_Survival", model=T, class.col="classify", adjustvar=NULL, exclude.med=T){ 
-
-    plotlab=list("Overall_Survival"="OS", "Event_Free_Survival"="EFS")
-    sca=2.5  
-    allsurvs=lapply(sigs, function(sig){
-  
-    fcat("calculating survival dataset", analysis.list$dsname, "signature", sig)
-  
-      
-        
-survmat<-format.survival(analysis.list, sig, survivaltype, lowthresh, highthresh)
- 
- 
- 
-
-#for ease, track back the name of the percentile variable
-percentile.column.name=paste0("percentile.", sig)
-
-
-################################################################################
-#generating percentiles for the signature
-################################################################################
-
-################################################################################
-# generate combined variable stratifier
-################################################################################
-#variable specifying what specific stratum it is
-fcat("0")
-survmat[, "def"]=1
-varname=ifelse(is.null(adjustvar), "def", adjustvar )
-varstring=    paste0("stratum.", sig,'.',varname)
-survmat=survmat %>% dplyr::mutate(temp=paste( !!sym(percentile.column.name),!!sym(varname) , sep="_"))
-survmat=survmat %>% dplyr::mutate(!!sym(varstring):=temp)
-
-
-#variable to be called generically called stratum within the code for practicality
-survmat=survmat %>% dplyr::mutate(stratum=temp)
-
-fcat("1")
-if(class.col=="classify"){
-survmat[ "classify"]= survmat[,percentile.column.name]
-
-survmat[, "classification.variable"]=percentile.column.name
-}else{
-survmat[,"classify"]=  survmat[, class.col] 
-survmat[, "classification.variable"]=class.col
-}
-
-################################################################################
-# filtering
-################################################################################
-
- fcat("size before filtering", nrow(survmat), ncol(survmat))
- 
-
- cols.to.check=c(class.col, "gender", adjustvar, "Survival","Time")
- 
- survmat=survmat[complete.cases(survmat[, cols.to.check]), ]
- 
- fcat("size after filtering", nrow(survmat), ncol(survmat))
-
-
-
-if(exclude.med){
-    survmat=survmat %>% dplyr::filter(classify!="med")
-}
-
-obs=survmat %>% group_by(classify, inss_stage, MYCN_status, COG.Risk.Group, age.processed) %>% summarise(counts=n())
-fcat("observation counts:")
-print(obs)
-fcat("3")
-
-
-survmat$classify= factor(survmat$classify, levels=c("low", "high"))
-survmat$classify=relevel(survmat$classify, ref="low")
-#diagnose.cox.covariates(survmat, predictor="classify", covariates=cols.to.check)
-
-fcat("4")
-
-
-survtest=survival::survdiff(formula = survival::Surv(time=Time, event=as.numeric(Survival)) ~ classify,
-data = survmat)
-
-
-
- 
- 
- 
-pval=p_value <- 1 - pchisq(survtest$chisq, df = length(survtest$n) - 1)
-pstring= paste("\n p=", pval %>% sprintf("%.3f", .))
-
-
-
-
-fcat("6")
-
-
-
-if(class.col=="stratum"){
-    fcat("7. plotting survival by stratum")
-
-    survplot=ggsurvplot(fit = survival::Surv(time=Time, as.numeric(Survival)) ~ classify, 
-    data = survmat, color="classify", risk.table=T, break.time.by=2 ,title=paste(plotlab[[survivaltype]],"strata", pstring))
-}else{
-    fcat("7.5")
-    
-
- fcat("survmat dims", nrow(survmat), ncol(survmat))
-
-survplot=explicit.survplot.classify(survmat, sig, pstring, survivaltype)
- }
-fcat("8")
-compbars=ggplot(survmat, aes(x=factor(classify, levels=c("low","high"))))+geom_bar(aes(fill=MYCN_status), position="fill")+theme_classic()+coord_flip()+NoLegend()
-
-plot.title.string=paste_(survivaltype, analysis.list$dsname, "signature",sig, "by",class.col, "high", highthresh, "low", lowthresh)
-
-if(class.col=="stratum"){
-    fcat("8.5")
-height.factor=1+ 0.03*(length(survmat[[class.col]] %>% table)-2)   
-width.factor=0.7+ 0.01*(max(nchar(survmat[[class.col]]) %>% table)-4) 
-}else{
- height.factor=1 
- width.factor=0.7
-}
-
-
-tpdf(path=paste0(create.storage.path(timestamp(paste_('survival_curves', analysis.version)), analysis.list$dsname,survivaltype,sig, paste0(lowthresh,"_", highthresh)), '/'), paste_("survival_plots_", plot.title.string), he=pw*sca*height.factor,wi=pw*sca*.7)
-print(survplot)
-dev.off()
-
-coxforest=NULL
-invariant.adjustvar=NULL
-invariant.gender=NULL
-complete.formula=NULL
-
-covariates=vector()
-flags=vector()
-        
-
-for(j in 1:length(adjustvar)){
-if(!is.null(adjustvar[j])){
-if(length(unique(analysis.list$gpcdf[[adjustvar[j]]]))==1){
- flags[j]=F
- 
-}else{flags[j]=T
-covariates=c(covariates,paste0("+ ", adjustvar[j]))
-
-}
-}
-}    
-covariates=paste(covariates[flags] %>% removenas, collapse="")
-
-if(model){
-    
-    fcat("9. performing model...")
-library(survminer)    
-    
-    
-        fcat("10. preparing formula...")
-
-        coreformula=cox.formula <- paste("Surv(time=Time, event=as.numeric(Survival)) ~", class.col)
-
-        
-
-invariant.adjustvars=!flags %>% givename(., adjustvar)
-        
-        
-if(!any(flags)){
-    
-
-fcat("9.5. Warning. with covariates. Proceeding to model only predictor coefficients")
-    
-complete.formula=coreformula
-
-
-}else{
-    
-    ## perform this code when variables to adjust are clear of problems
-    fcat("10. ")
-    complete.formula=paste(coreformula, covariates)
-    
-    
-}
-
-fcat(complete.formula)
-    cox.formula <- as.formula(complete.formula)
-
- 
-    fcat("11")
-coxmodel <- coxph(cox.formula, data = survmat)
-
-
-    fcat("12. plotting adjusted survival curve")
-
-
-coxadjusted=make.adjustedplot(analysis.list, coxmodel, survmat, survivaltype, lowthresh, topthresh, sig, pstring, plot.title.string, width.factor) 
-
-fcat("13 making coxforest")
-
-coxforest=manual.ggforest(coxmodel, title=analysis.list$dsname, analysis.list=analysis.list, analysis.version=analysis.version, survivaltype=survivaltype, sig=sig, lowthresh=lowthresh, highthresh=topthresh, width.factor=width.factor, sca=sca, plot.title.string=plot.title.string)
-
-}else{
- coxforest=NULL 
- coxmodel=NULL}
-
-
-l=list(survival.data=survmat, survival.curve=survplot, test=survtest, counts=obs, cox.model=ifelse(model, list(model=coxmodel, forest.plot= coxforest, formula=complete.formula), NA), invariant.adjustvar=invariant.adjustvars)
-l
-}) %>% givename(., sigs)
-
-pathh=create.storage.path(timestamp(paste_('survival_curves', analysis.version)), analysis.list$dsname,survivaltype)    
-saveRDS(allsurvs, file= paste0(pathh,"/survival_analysis_output.rds"))    
-allsurvs
-}
-
-
-
-explicit.survplot.classify= function(survmat, sig, pstring, survivaltype) {
-    
-  survplot = ggsurvplot(
-    fit = survminer::surv_fit(Surv(time = Time, event = as.numeric(Survival)) ~ classify, 
-                            data = survmat),
-    color = "classify",
-    palette = allcolors[["signature.group"]],
-    risk.table = TRUE,
-    break.time.by = 2,
-    title = paste(plotlab[[survivaltype]], sig, pstring)
-  )
-  return(survplot)
-}
-
-
-make.adjustedplot<- function(analysis.list, coxmodel, 
-  survmat, survivaltype, lowthresh, highthresh, 
-  sig, pstring, plot.title.string, width.factor, sca
-) {
-  # Run ggadjustedcurves safely
-  coxadjusted <- tryCatch({
-    ggadjustedcurves(
-      coxmodel,
-      data = survmat %>% dplyr::filter(classify != "med"),
-      variable = "classify",
-      method = "marginal",
-      color = "classify",
-      palette = allcolors[["signature.group"]],
-      risk.table = TRUE,
-      break.time.by = 2,
-      title = paste(plotlab[[survivaltype]], sig, pstring)
-    )
-  }, error = function(e) {
-    message("Error in ggadjustedcurves: ", e$message)
-   e$message
-  })
-
-  # Plot only if successful
-  if (!is.character(coxadjusted)) {
-    tpdf(
-      path = paste0(
-        create.storage.path(
-          timestamp(paste_("survival_curves", analysis.version)),
-          analysis.list$dsname,
-          survivaltype,
-          sig,
-          paste0(lowthresh, "_", highthresh)
-        ), '/'
-      ),
-      paste_("adjusted_KMplot", analysis.list$dsname,survivaltype, sig, analysis.version ),
-      he = pw * sca,
-      wi = pw * sca * width.factor
-    )
-    print(coxadjusted)
-    dev.off()
-  }
-  
-  coxadjusted
-}
-
-
-calculate.signatures=function(analysis.list, signatures){   
-datasetid=digest::digest(analysis.list)
-ds0=analysis.list$dsname
-simpleCache(make.cache.name("gpcdf_with_signatures", analysis.version, package.vars(ds0, datasetid)),{    
-#################################################################################
-# calculating signatures
-################################################################################
-
-gsva_output=GSVA::gsva(analysis.list$vsd %>% apply(., c(1,2), as.numeric),
-                         signatures,
-                         method = "ssgsea")
-
-signature.scores=gsva_output %>% t 
-
-sigs=signature.scores %>% colnames
-for(mv in sigs){
-analysis.list$gpcdf[, mv]= signature.scores[, mv] %>% unname # incorporating 
-}
-
-analysis.list$signatures=sigs
-gc()
-analysis.list
-}, assignToVar="analysis.list", reload=T)
-analysis.list
-}
-
-
-
-
-
-
-
-
-
-
-make.cox.forest <- function(coxmodel, title="Hazard Ratio", plot.title.string) {
-  
-  coxforest <- tryCatch({
-    plt=ggforest(coxmodel, data = survmat)
-  }, error = function(e) {
-    message("ggforest failed, using manual.ggforest instead.")
-    plt=manual.ggforest(coxmodel)
-  })
-  
-  tpdf(
-    path = paste0(
-      create.storage.path(timestamp(paste_('survival_curves', analysis.version)), 
-                           analysis.list$dsname, survivaltype, sig, 
-                           paste0(lowthresh, "_", highthresh)), 
-      '/'
-    ),
-    paste_("coxforestplot_", plot.title.string),
-    he = pw * sca,
-    wi = pw * sca * width.factor
-  )
-  
-  print(plt)
-  dev.off()
-  plt
-}
-
-
-
-
-
-
-
-manual.ggforest <- function(coxmodel, title = "Hazard Ratios", analysis.list, analysis.version, survivaltype, sig, lowthresh, highthresh, width.factor, sca, plot.title.string) {
-    library(broom)    # for tidy()
-  
-  # 1. Extract tidy summary of model
-  cox_summary <- broom::tidy(coxmodel, exponentiate = TRUE, conf.int = TRUE)
-  
-  # 2. Clean it up
-  cox_summary <- cox_summary %>%
-    filter(term != "(Intercept)") %>%  # if intercept exists, drop it
-    mutate(term = factor(term, levels = rev(term)))  # reverse order for plotting
-  
-  # 3. Basic plot
-  plt=ggplot(cox_summary, aes(x = estimate, y = term)) +
-    geom_point(size = 3, color = "blue") +
-    geom_errorbarh(aes(xmin = conf.low, xmax = conf.high), height = 0.2, color = "black") +
-    geom_vline(xintercept = 1, linetype = "dashed", color = "red") +
-    theme_minimal(base_size = 14) +
-    xlab("Hazard Ratio (log scale)") +
-    ylab("") +
-    scale_x_log10() +  # hazard ratios are usually on a log scale
-    ggtitle(title) +
-    theme(
-      panel.grid.minor = element_blank(),
-      axis.text.y = element_text(hjust = 1)
-    )
-  
-    tpdf(
-    path = paste0(
-      create.storage.path(timestamp(paste_('survival_curves', analysis.version)), 
-                           analysis.list$dsname, survivaltype, sig, 
-                           paste0(lowthresh, "_", highthresh)), 
-      '/'
-    ),
-    paste_("coxforestplot_", plot.title.string),
-    he = pw * sca,
-    wi = pw * sca * width.factor
-  )
-  
-  print(plt)
-  dev.off()
-  plt
-}
-
-
-
-
-diagnose.cox.covariates <- function(data, predictor, covariates, time = "Time", event = "Survival") {
-  library(survival)
-
-  for (covar in covariates) {
-    cat("\nChecking variable:", covar, "\n")
-    
-    # Check if variable exists
-    if (!covar %in% colnames(data)) {
-      cat("  ❌ Variable does not exist in the dataset.\n")
-      next
-    }
-
-    var_data <- data[[covar]]
-    
-    # Check for only one unique value
-    unique_vals <- unique(na.omit(var_data))
-    if (length(unique_vals) == 1) {
-      cat("  ⚠️ Variable has only one unique value:", unique_vals, "\n")
-    }
-    
-    # Check for NAs
-    na_count <- sum(is.na(var_data))
-    if (na_count > 0) {
-      cat("  ⚠️ Variable has", na_count, "missing values (NAs).\n")
-    }
-    
-    # Check association with predictor
-    if (is.factor(var_data) || is.character(var_data)) {
-      tab <- table(data[[predictor]], var_data)
-      if (any(rowSums(tab) == 0) || any(colSums(tab) == 0)) {
-        cat("  ⚠️ Perfect association (zero cells in contingency table with predictor).\n")
-      }
-    } else {
-      # For numeric variables, check if variance exists in each level of predictor
-      group_var <- tapply(var_data, data[[predictor]], function(x) var(na.omit(x)))
-      if (any(sapply(group_var, function(x) is.na(x) || x == 0))) {
-        cat("  ⚠️ No variance in covariate within one or more levels of the predictor.\n")
-      }
-    }
-    
-    # Check for perfect separation in survival model
-    formula <- as.formula(paste0("Surv(", time, ", ", event, ") ~ classify +", covar))
-    fit <- try(coxph(formula, data = data), silent = TRUE)
-    if (inherits(fit, "try-error")) {
-      cat("  ❌ Cox model failed to fit. Possible perfect separation or other modeling issue.\n")
-    } else if (any(is.na(coef(fit)))) {
-      cat("  ⚠️ Model coefficients contain NA — might be due to singularities or collinearity.\n")
-    }
-  }
-}
-
-
-
-update.analysis<- function (analysis.list) {  
-    dsname = analysis.list$dsname  
-    package.id = digest::digest(analysis.list)  
-    analysis.list$package.id = package.id   
-    simpleCache(make.cache.name("full_analysis_components_r2",         analysis.version, package.vars(dsname, package.id)),         {            analysis.list        }, assignToVar = "analysis.list", reload = T)  
-    
-    analysis.list}
-
-
-
-subset.analysis<- function(analysis.list, varname, alternatives, invert=F) {
-  # Extract dataframe and matrix from the list
-  df <- analysis.list$gpcdf
-  mat <- analysis.list$vsd
-  
-  # Filter dataframe based on 'varname' column
-  if(!invert){
-      invertstring=""
-  filtered_df <- df %>% dplyr::filter(!!sym(varname) %in% alternatives)
-  }else{
-invertstring="not_"      
-   filtered_df <- df %>% dplyr::filter(!(!!sym(varname) %in% alternatives))   
-  }
-  # Subset matrix by selecting columns corresponding to the row names of filtered dataframe
-  filtered_mat <- mat[, (colnames(mat) %in% rownames(filtered_df)), drop = FALSE]
-  
-  # Return modified list
-  analysis.list$vsd=filtered_mat
-  analysis.list$gpcdf=filtered_df
- 
-  newname=paste0(c(varname,"_", invertstring, alternatives), collapse="")
-  ##editing the dataset name but making sure the editing happens only once
-analysis.list$dsname=paste0(gsub(newname, "", analysis.list$dsname), newname)
-analysis.list
-}
-
-
-
-################################################################################
-# create storage folder chain, fully customiseable
-################################################################################
-create.storage.path <- function(..., base_dir="~/mnt_out/plots/") {
-  # Define base directory
-  
-  
-  # Construct the full path
-  full_path <- file.path(base_dir, ...)
-  
-  # Create the directories (recursive = TRUE ensures all subdirectories are created)
-  dir.create(full_path, recursive = TRUE, showWarnings = FALSE)
-  
-  # Return the full path
-  return(normalizePath(full_path, mustWork = FALSE))
-}
-
-
-is.column.all.na <- function(df, colname) {
-  # Check if the column exists
-  if (!colname %in% names(df)) {
-    stop("Column not found in dataframe.")
-  }
-  
-  # Check if all values in the column are NA
-  return(all(is.na(df[[colname]])))
-}
-
-check.variable.categories=function(df, var){
- df[[var]]  %>% table %>% length
-}
-
-
-format.age.binary=function(analysis.list, age.var="age.years"){ 
-    analysis.list$gpcdf$age.processed=ifelse(as.numeric(analysis.list$gpcdf[[age.var]]) >=1.5,1,0)
-    analysis.list
-}
-
-fcat("T")
-format.age.init=function(analysis.list){ 
-        if(!("age.original" %in% colnames(analysis.list$gpcdf))){
-    analysis.list$gpcdf$age.original=analysis.list$gpcdf$age
-    }
-
-   analysis.list$gpcdf$age=analysis.list$gpcdf$age.original
-if(any(analysis.list$gpcdf$age.units=="days")){
-    analysis.list$gpcdf$age.days=analysis.list$gpcdf$age
-     analysis.list$gpcdf$age.original=analysis.list$gpcdf$age
-     analysis.list$gpcdf$age.years=as.numeric(analysis.list$gpcdf$age)/365
-    analysis.list$gpcdf$age.months=analysis.list$gpcdf$age.years/12
-        analysis.list$gpcdf$age=as.numeric(analysis.list$gpcdf$age)/365
+ lapply(1:length(vec1), function(x)
    
-}
-if(any(analysis.list$gpcdf$age.units=="months")){
-    analysis.list$gpcdf$age.days=as.numeric(analysis.list$gpcdf$age)*30
-    analysis.list$gpcdf$age.months=analysis.list$gpcdf$age
-     analysis.list$gpcdf$age.original=analysis.list$gpcdf$age
-    analysis.list$gpcdf$age.years=as.numeric(analysis.list$gpcdf$age)/12
-}
-    
-if(any(analysis.list$gpcdf$age.units=="years")){
-     analysis.list$gpcdf$age.original=analysis.list$gpcdf$age
-     analysis.list$gpcdf$age.years=analysis.list$gpcdf$age
-    analysis.list$gpcdf$age.days=as.numeric(analysis.list$gpcdf$age)*365
-        
-    analysis.list$gpcdf$age.months=analysis.list$gpcdf$age.days/12
-
-}
-analysis.list$gpcdf$age=analysis.list$gpcdf$age.years  
-    
-    
-
-update.analysis(analysis.list)
-}
-
-
-format.age.cut=function(anaysis.list, maxx=20, byy=.5){ 
-    analysis.list$gpcdf$age.processed=cut(as.numeric(analysis.list$gpcdf$age.days)/365, breaks=seq(0, maxx,byy), labels=seq(0,maxx,byy)[1:(maxx/byy)],right=T , include.lowest=T)
-    analysis.list$gpcdf$age.processed=cut(as.numeric(analysis.list$gpcdf$age.days)/365, breaks=seq(0, maxx,byy), labels=seq(0,maxx,byy)[1:(maxx/byy)],right=T , include.lowest=T)
-    analysis.list$gpcdf$age=analysis.list$gpcdf$age.processed
-    update.analysis(analysis.list)
-    
-    }
-format.age.restore=function(analysis.list){ 
-    if(("age.original" %in% colnames(analysis.list$gpcdf))){
-    analysis.list$gpcdf$age=analysis.list$gpcdf$age.original
-    }else{
-     warning:("no original age found. keeping the same") 
-    }
-        
-    update.analysis(analysis.list)
-    
-    }
-
-
-process.r2=function(r2.list, deseq=F){
-    
-    
-dsname=r2.list$dsname
-if(deseq){
-simpleCache(make.cache.name("deseq2object", analysis.version, package.vars(dsname)), {
-dds<- DESeq(DESeqDataSetFromMatrix(r2.list$counts, colData= r2.list$metadata, design = ~1))
-dds
-}, assignToVar="dds", reload=T)
-
-vsd=assay(vst(dds))
-vsd.id=digest::digest(vsd)    
-}else{
-vsd=r2.list$counts
-vsd.id=digest::digest(vsd)
-}
-################################################################################
-# performing PCA on the VST counts
-################################################################################
-
-
-gpca=prcomp(apply(vsd, c(1,2), as.numeric) %>% t)
-
-gpcdf=gpca$x %>% as.data.frame %>% names2col(., "File.ID")
-
-
-
-################################################################################
-# incorporating metadata to the pca data frame for ease of plotting
-################################################################################
-metavars=colnames(r2.list$metadata)
-for(mv in metavars){
-gpcdf[, mv]= r2.list$metadata[rownames(gpcdf), mv] %>% unname # incorporating 
-}
-comp1=1
-comp2=2
-
-gpcdf.id=digest::digest(gpcdf)
-
-fcat("U")
-################################################################################
-# cache results
-################################################################################
-
-data.package=package.vars(vsd, gpcdf)
-data.package$gpcdf.id=gpcdf.id
-data.package$vsd.id=vsd.id
-data.package$dsname=dsname
-
-package.id=digest::digest(data.package)
-data.package$package.id=package.id
-
-simpleCache(make.cache.name("full_analysis_components_r2", analysis.version, package.vars(dsname, package.id)),{
-    data.package
-    
-}, assignToVar="analysis.list", reload=T)
-analysis.list
-}
-
-
-harmonise.analysis=function(analysis.list, process.age=T, replace=F, replace.time=F){
-mycn.possible.names=c("mycn_amp", "mycn_.current_disease_episode.","mycn_amplified_4.0", "MYCN", "mycn", "mna", "mycn_status")
-
-#MYCN
-analysis.list$gpcdf=harmonise.values(analysis.list$gpcdf, mycn.possible.names,"MYCN_status", lst=list(yes="Amplified", no="Not Amplified", amp="Amplified", nonamp="Not Amplified", non_amp="Not Amplified", "0"="Not Amplified", "1"="Amplified", normal="Not Amplified", amplified="Amplified", non_amplified="Not Amplified", not_amplified="Not Amplified", na=NA, nd=NA),  replace=replace) 
-#STAGE
-analysis.list$gpcdf=harmonise.values(analysis.list$gpcdf, c( "^stage","inss", "stg", "inss_stage"),"inss_stage", lst=list("st1-3_4s"="Stage 1-3 4s", "4"="Stage 4",st2="Stage 2",st2.1="Stage 2", st4s="Stage 4s", st4="Stage 4", st1="Stage 1", st3="Stage 3", na=NA, "1"= "Stage 1", "2"="Stage 2", "3"="Stage 3", nd=NA, stage_3="Stage 3", stage_4="Stage 4", stage_4s="Stage 4s"), replace=replace) 
-
-#RISK
-analysis.list$gpcdf=harmonise.values(analysis.list$gpcdf, c("nb2004", "^risk$", "COG.Risk.Group", "cog_risk_group"),"COG.Risk.Group", lst=list(hr="High Risk", "lr_ir"="Not High Risk", na=NA , high_risk="High Risk", intermediate_risk="Not High Risk", low_risk="Not High Risk", nd=NA), replace=T) 
-#EFS event
-analysis.list$gpcdf=harmonise.values(analysis.list$gpcdf, c("efs", "eventfree_surv_event", "NTI_event_progrfree", "first_event", "^Event$", "event_efs"),"Event_Free_Survival", 
-lst=list(yes="0",
-         no="1",
-         diseased="1",
-         alive="0",
-         nd="0",
-         "no event"="0",
-         "death from disease"="1",
-         "relapse of disease"="1",
-         "event"=1,
-         "death"=1,
-         "progression"=1,
-         "censored"=0,
-         "relapse"=1,
-         "second_malignant_neoplasm"=1,
-         "YES"=1,
-         "NO"=0
-         
-         )
-, replace=replace.time) 
-
-#OS event
-analysis.list$gpcdf=harmonise.values(analysis.list$gpcdf, c("event_os","Vital_Status","OS_bin", "^os$", "overall_surv_event", "NTI_event_overall", "dead", "vital_status"),"Overall_Survival", 
-lst=list(yes="1",no="0",
-         "no event"="0",
-         "death from disease"="1", 
-         Dead="1",
-         Alive="0",
-         dead="1",
-         alive="0", 
-         "YES"="1", 
-         "NO"="0",
-         diseased="1",
-         nd=NA
-         ), replace=replace.time) 
-
-
-#efs time
-analysis.list$gpcdf=harmonise.values(analysis.list$gpcdf, c("efs_time.days.", "nti_surv_progrfree", "eventfree_surv_days", "event_free_survival_time_in_days", "EventFreeSurvival"),"Event_Free_Survival_Time_in_Days", replace=replace.time, lst=list(nd=NA, na=NA)) 
-
-#OS time
-analysis.list$gpcdf=harmonise.values(analysis.list$gpcdf, c("os_time_.days.", "overall_surv_days", "nti_surv_overall", "dead_or_last_follow_up_.days.", "overall_survival_time_in_days", "os_time"),"Overall_Survival_Time_in_Days", replace=replace.time, lst=list(nd=NA, na=NA)) 
-
-# age info column (careful, format may vary)
-analysis.list$gpcdf= analysis.list$gpcdf %>% harmonise.values(., c( "age_year", "^age$", "age_.days.","age_at_diagnosis_in_days" ,"age_diagnosis_days","age_at_diagnosis", "^Age$"), "age", replace=replace) 
-#GENDER
-
-analysis.list$gpcdf= analysis.list$gpcdf  %>% harmonise.values(., c( "Sex_Imputed", "^sex$", "gender"), "gender", lst=list("m"="m", "f"="f",nd=NA,"M"="m", "F"="f", male="m", female="f", MALE="m", na=NA, "Male"= "m", "Female"="f", nd=NA),replace=replace) 
-
-###format age numerically
-
-#analysis.list$gpcdf$age=cut(as.numeric(analysis.list$gpcdf$age)/365, breaks=seq(0, 20,0.5), labels=seq(0,20,0.5)[1:40],right=T , include.lowest=T)
-
-if(process.age){
-analysis.list=format.age.init(analysis.list)
-analysis.list=format.age.binary(analysis.list)
-}
-
-
-analysis.list
-}
-
-fcat("V")
-# Function to get the next available snapshot number
-get.next.snapshot_number <- function(cache_prefix, cache_dir = tempdir()) {
-    # List all existing cache files in the directory
-    existing_caches <- list.files(cache_dir, pattern = paste0("^", cache_prefix, "_[0-9]+\\.RData$"))
-    
-    # Extract numbers from filenames
-    snapshot_numbers <- as.numeric(gsub(paste0(cache_prefix, "_([0-9]+)\\.RData"), "\\1", existing_caches))
-    
-    # Find the next available number
-    next_number <- ifelse(length(snapshot_numbers) == 0, 1, max(snapshot_numbers, na.rm = TRUE) + 1)
-    
-    return(next_number)
-}
-
-# Function to create a numbered snapshot of an object
-save.snapshot <- function(object, cache_prefix, cache_dir = tempdir()) {
-    # Get the next available snapshot number
-    snapshot_number <- get_next_snapshot_number(cache_prefix, cache_dir)
-    
-    # Generate the cache name
-    cache_name <- paste0(cache_prefix, "_", snapshot_number)
-    
-    # Save snapshot using simpleCache
-    simpleCache(cache_name, { object }, cacheDir = cache_dir, saveOnExit = TRUE)
-    
-    return(cache_name)
-}
-
-
-################################################################################
-# collect all self made functions and store them into a script
-################################################################################
-
-
-collect.functions <- function(filename = "loaded_functions.R") {
-  # Create the R directory if it doesn't exist
-  dir.create("./R", showWarnings = FALSE, recursive = TRUE)
-
-  # Full path for saving
-  filepath <- file.path("./R", filename)
-
-  # Identify user-defined functions in the global environment
-  user_functions <- ls(envir = globalenv())[sapply(ls(envir = globalenv()), function(x) is.function(get(x, envir = globalenv())))]
-
-  # Save functions to a human-readable R script
-  sink(filepath)
-  for (f in user_functions) {
-    cat("\n", f, "<- ", deparse(get(f)), "\n", sep = "")
-  }
-  sink()
-
-  message("Functions saved to: ", filepath)
-}
-
-fcat("W")
-
-
-cache.object <- function(object, id=NULL, analysis.version=analysis.version, recreate = FALSE) {
-  # Get cache directory from global options
-  
-    if(is.null(id)){
-        id=getvarname(object)
-    }
-    cache_dir <- getOption("RCACHE.DIR", default = tempdir())  # Default to tempdir if not set
-  
-  # Ensure the directory exists
-  if (!dir.exists(cache_dir)) {
-    dir.create(cache_dir, recursive = TRUE)
-  }
-  
-  # Generate a unique identifier using object's digest
-  obj_hash <- digest(object, algo = "md5")  # MD5 hash of the object
-  
-  # Construct filename and full path
-  file_identifier <- paste0(id, "_", obj_hash, "_", analysis.version)
-  file_name <- paste0(file_identifier, ".RData")
-  file_path <- file.path(cache_dir, file_name)
-  
-  # Check if file already exists
-  if (file.exists(file_path) && !recreate) {
-    message("File already exists and 'recreate' is FALSE. Skipping save.")
-  } else {
-    # Save the object to disk
-    save(object, file = file_path)
-    message("Object cached: ", file_path)
-  }
-  
-  # Return file details
-  return(list(
-    path = file_path,
-    identifier = file_identifier
-  ))
-}
-
-
-
-
-reload.ds<- function (cachename) { 
-    simpleCache(cachename, assignToVar = "analysis.list", reload = T)    
-    analysis.list}
-
-
-
-fcat("X")
-###############################################################################
-# update symbols of genes to Seurat standard
-###############################################################################
-split_vector <- function(vec, y) {
-  # Get the length of the input vector
-  x <- length(vec)
-  
-  # Generate the start indices for each subvector
-  starts <- seq(1, x, by = y)
-  
-  # Use lapply to split the vector
-  sublists <- lapply(starts, function(start) {
-    end <- min(start + y - 1, x)  # Ensure we do not exceed x
-    vec[start:end]
-  })
-  
-  return(sublists)
-}
-
-
-
-update.genes=function(analysis.list, genes.per.chunk=100, return.updated.object=T){
-dsname=analysis.list$dsname
-old.gene.names=split_vector(rownames(analysis.list$vsd), genes.per.chunk)
-old.gene.names.id=digest::digest(rownames(analysis.list$vsd))
-
-new.gene.names<- lapply(1:length(old.gene.names), function(chunknum){
-    simpleCache(make.cache.name("newgenenames", analysis.version, package.vars(dsname, genes.per.chunk,chunknum, old.gene.names.id)), {
-    ngvector=Seurat::UpdateSymbolList(old.gene.names[[chunknum]])
-    fcat("Warning: chunk number ", chunknum, "has mismatching lengths. processing per gene..." )
-        if (length(ngvector)!= length(old.gene.names[[chunknum]])){
-            for(k in 1:length(old.gene.names[[chunknum]])){
-                
-                ngvector[k]=Seurat::UpdateSymbolList(old.gene.names[[chunknum]][k])
-            }
-        }
-        ngvector
-    }, assignToVar="newgenes", reload=T)
-    newgenes
-})
-
-
-ngn.vector=new.gene.names %>% unlist
-
-if(return.updated.object){
-    rownames(analysis.list$vsd)=ngn.vector
-    return(analysis.list)
-}else{
-return(ngn.vector)
-    
-}
-}
-
-
-update.genes.par=function(num) update.genes(reload.ds(parlist[[num]]$cache))
-
-
-extract.gene=function(analysis.list, gene){
- analysis.list$gpcdf[, gene]=analysis.list$vsd[gene, rownames(analysis.list$gpcdf)]   
-analysis.list    
-}
-
-xyplot=function(analysis.list, x, y, colorby="MYCN_status", legend=T, legend.position=ifelse(legend, "bottom", "none"), sz=1){
-    
-   # corr <- cor(analysis.list$gpcdf[[x]], analysis.list$gpcdf[[y]])
-    
-(ggplot(analysis.list$gpcdf, aes(x=!!sym(x),y=!!sym(y) ))+
-        geom_point_rast( aes(color=!!sym(colorby)), size=sz)+
-        scale_color_manual(values=allcolors[[colorby]])+
-        theme_classic()+theme(legend.position = legend.position)+
-        guides(color = guide_legend(nrow = 1))+
-        ggtitle(analysis.list$dsname)) %>% ggMarginal(., type="density", groupFill=T, groupColour=T) 
-
-    
-    }
-
-
-hardpaste=function(x) paste(x, collapse="")
-
-
-
-
-     pairplots= function(analysis.list, paired.sig, sca=13){
-sig1=paired.sig[ 1]
-sig2=paired.sig[ 2]  
-  fcat(analysis.list$dsname, sig1, "vs", sig2, "...")
-#"tissue_or_organ_of_origin"
-
-
-library(ggrepel)
-
-#day
-#sigs.mycn=(ggplot(analysis.list$gpcdf, aes(x=!!sym(sig1), y=!!sym(sig2), color=MYCN_status))+geom_point_rast( size=sz)+theme_classic()+scale_color_manual(values=allcolors[["MYCN_status"]])+theme(legend.position = "bottom")+ggtitle(analysis.list$dsname)) %>% ggMarginal(., type="density", groupFill=T, groupColour=T)
-
-#sigs.stage=(ggplot(analysis.list$gpcdf, aes(x=!!sym(sig1), y=!!sym(sig2), color=inss_stage))+geom_point_rast( size=sz)+theme_classic()+scale_color_manual(values=allcolors[["inss_stage"]])+theme(legend.position = "bottom")+guides(color = guide_legend(nrow = 1))+ggtitle(analysis.list$dsname) )%>% ggMarginal(., type="density", groupFill=T, groupColour=T)
-    
-#sigs.rg=(ggplot(analysis.list$gpcdf, aes(x=!!sym(sig1), y=!!sym(sig2), color=COG.Risk.Group))+geom_point_rast( size=sz)+theme_classic()+theme(legend.position = "bottom")+scale_color_manual(values=allcolors[["COG.Risk.Group"]])+theme(legend.position = "bottom")+guides(color = guide_legend(nrow = 1))+ggtitle(analysis.list$dsname) )%>% ggMarginal(., type="density", groupFill=T, groupColour=T) 
-sigs.mycn=xyplot(analysis.list, x=sig1, y=sig2, "MYCN_status", sz=sz)
-sigs.stage=xyplot(analysis.list, x=sig1, y=sig2, "inss_stage", sz=sz)
-sigs.rg=xyplot(analysis.list, x=sig1, y=sig2, colorby = "COG.Risk.Group", sz=sz)
-
-tpdf(path=config$plotpath, paste_("scatterplot_",analysis.list$dsname, "vst", sig1, "vs", sig2, "_bulkrna_"),  width=pw*sca.pairs*2, height=pw*sca.pairs*.8)
-
-print(grid.arrange(sigs.mycn,sigs.stage, sigs.rg, ncol=3))
-dev.off()
-
-pat="^myc$"
-genes= grep(pat, rownames(analysis.list$vsd), ignore.case = T, value=T)
-if(length(genes)>0){
-for(gene in genes){
-tpdf(path=config$plotpath, paste_("scatterplot_",analysis.list$dsname, "vst", sig1, "vs", gene, "_bulkrna_"),  width=pw*sca.pairs*.7, height=pw*sca.pairs*.8)
-ep=xyplot(analysis.list %>% extract.gene(., gene), x=sig1, y=gene, colorby="MYCN_status", sz=sz)
-print(ep)
-dev.off()
-}
-}else{
-  fcat("Warning: no genes found with pattern", pat)  
-}
-
- lst<-list()
-lst$name<-paste0(sig1, ".vs.", sig2)
- lst$mycn<-sigs.mycn
- lst$rg<-sigs.rg
-lst$stage<-sigs.stage
- lst$myc<-ep
- 
- #lst$myc.mycn.sig1= mcc(classify.percentiles(analysis.list$gpcdf[[sig1]], lowthresh, topthresh,label.high=1, label.med=NA, label.low=0), ifelse(analysis.list$gpcdf$MYCN_status=="Amplified", 1,0))
- #lst$mcc.mycn.sig2= mcc(classify.percentiles(analysis.list$gpcdf[[sig2]], lowthresh, topthresh,label.high=1, label.med=NA, label.low=0), ifelse(analysis.list$gpcdf$MYCN_status=="Amplified", 1,0))
- 
- lst
-} 
-
-
-################################################################################
-# print funciton args
-################################################################################
-print.function.args <- function(func_name) {
-       # Check if the function exists in the current environment
-       if (!exists(func_name, mode = "function")) {
-         stop(paste("Function", func_name, "does not exist."))
-       }
-       
-       # Get the function object
-       func <- get(func_name, mode = "function")
-       
-       # Extract the formals (argument list)
-       args <- formals(func)
-       
-       # Convert to a string representation
-       arg_str <- paste0(names(args), 
-                         ifelse(sapply(args, is.symbol), "", 
-                                paste0(" = ", sapply(args, deparse))), 
-                         collapse = ", ")
-       
-       # Print the function declaration line
-       cat(sprintf("%s <- function(%s)\n", func_name, arg_str))
-} 
-     
-     
-summarisename= Vectorize(function(nm, total.print.length=30, first.words=4){
-  #this function takes the first "first" words of the name, then if this exceeds total.print.length, 
-  #we slice the middle section. 
-  nm2=strsplit(nm, split=" ")[[1]]
-  nm=nm2[1:(ifelse(first.words>length(nm2), length(nm2), first.words))] %>% paste(., collapse=" ")
-  
-  if(nchar(nm)>total.print.length){
-    
-    extend=round(total.print.length/2)
-    a=substr(nm, 1, extend)
-    b=substr(nm, nchar(nm)-extend, nchar(nm))
-    out=paste0(a,"...", b)
-    
-  }else{
-    out=nm
-  }
-  return(out)
-}, USE.NAMES=F)
-
-
-################################################################################
-# cellinfo segregate cells within groups
-################################################################################
-
-
-################################################################################
-# generate color variations around a base color
-################################################################################
-color.variations <- function(x, z = 10, m = 10) {
-  # Helper to clamp values between 0 and 255
-  clamp <- function(v) pmin(pmax(v, 0), 255)
-  
-  # Remove leading '#' if present
-  x <- gsub("^#", "", x)
-  
-  # Parse RGB components
-  r <- strtoi(substr(x, 1, 2), 16L)
-  g <- strtoi(substr(x, 3, 4), 16L)
-  b <- strtoi(substr(x, 5, 6), 16L)
-  
-  variations <- replicate(m, {
-    # Sample deviations
-    delta <- sample(-z:z, 3, replace = TRUE)
-    
-    # Apply and clamp
-    r_new <- clamp(r + delta[1])
-    g_new <- clamp(g + delta[2])
-    b_new <- clamp(b + delta[3])
-    
-    # Convert back to hex
-    sprintf("#%02X%02X%02X", r_new, g_new, b_new)
-  })
-  
-  return(variations)
-}
-
-################################################################################
-# sort colors by brightness
-################################################################################
-
-sort.by.sum <- function(colors) {
-  # Remove "#" if present
-  hex_clean <- gsub("^#", "", colors)
-  
-  # Extract R, G, B components and convert to decimal
-  rgb_values <- t(sapply(hex_clean, function(hex) {
-    r <- strtoi(substr(hex, 1, 2), base = 16)
-    g <- strtoi(substr(hex, 3, 4), base = 16)
-    b <- strtoi(substr(hex, 5, 6), base = 16)
-    c(r, g, b)
-  }))
-  
-  # Compute sum of RGB for each color
-  rgb_sums <- rowSums(rgb_values)
-  
-  # Order colors by RGB sum
-  colors_sorted <- colors[order(rgb_sums)]
-  
-  return(colors_sorted)
-}
-
-
-sort.by.brightness <- function(colors, descending = FALSE) {
-  # Remove "#" if present
-  hex_clean <- gsub("^#", "", colors)
-  
-  # Extract R, G, B components
-  rgb_matrix <- t(sapply(hex_clean, function(hex) {
-    r <- strtoi(substr(hex, 1, 2), 16L)
-    g <- strtoi(substr(hex, 3, 4), 16L)
-    b <- strtoi(substr(hex, 5, 6), 16L)
-    c(r, g, b)
-  }))
-  
-  # Calculate brightness
-  brightness <- 0.2126 * rgb_matrix[, 1] + 
-                0.7152 * rgb_matrix[, 2] + 
-                0.0722 * rgb_matrix[, 3]
-  
-  # Sort by brightness
-  sorted_indices <- order(brightness, decreasing = descending)
-  return(colors[sorted_indices])
-}
-
-################################################################################
-# cellinfo filter cells
-################################################################################
-
-
-cellinfo.filter.cells=function(cellinfo, varr, vals, so=NULL){
-
-  if(!(varr %in% colnames(cellinfo$cell.annotation))){
-    
-  
-  if (!is.null(so)){
-    fcat("seurat object detected. importing annotations")
-    cellinfo= cellinfo %>% add.cell.annotation(so, ., vars = varr)
-  }else{
-   fcat(varr, "not detected in cellinfo and no seurat object provided. please provide seurat object. returning unfiltered") 
-    return(cellinfo)
-  }}
-    
-  
+   c(vec1[x], vec2[x])
    
-    filtered.cells= cellinfo$cell.annotation %>% dplyr::filter(!!sym(varr) %in% vals ) %>% rownames
-    
-    cellinfo$cell.list=lapply(cellinfo$cell.list, function(x){
-      x[x %in% filtered.cells]
-      
+   
+   )
+}
+
+# Function to check, install if necessary, and load packages
+install_and_load <- function(pkg) {
+  if (!require(pkg, character.only = TRUE)) {
+    # Try installing with BiocManager first
+    tryCatch({
+      BiocManager::install(pkg, dependencies = TRUE, update = FALSE)
+    }, error = function(e) {
+      message(paste("BiocManager could not install", pkg, "- trying install.packages instead."))
+      install.packages(pkg, dependencies = TRUE)
     })
     
-  refresh.cellinfo(cellinfo)   
-    
+    # Load the package after installation
+    library(pkg, character.only = TRUE)
   }
-  
-    
-}
-
-################################################################################
-# rebalance groups in a data frame
-################################################################################
-
-
-
-rebalance.by.group <- function(df, group_var, balance_var , return.ids.list=F) {
-df=df %>% names2col(., "cellid")
-  mins=df  %>%
-    group_by(!!sym(group_var), !!sym(balance_var)) %>%
-    mutate(nn = n()) %>%
-    ungroup() %>%
-    group_by(!!sym(group_var)) %>%
-    summarise(min_n = min(nn)) %>% as.data.frame
-  
-  balanced=lapply(1:nrow(mins), function(x){
-    
-    localmin=mins[x, "min_n"]
-    localclus=mins[x, group_var]
-    df %>% dplyr::filter(!!sym(group_var)== localclus) %>% group_by(!!sym(balance_var)) %>%
-    slice_sample(n = localmin, replace=F) %>%
-    ungroup() 
-}) %>% Reduce(rbind, .) 
-  if(return.ids.list){
-   
-    idlist=balanced %>% group_split(!!sym(group_var)) %>% lapply(., function(x) x %>% pull(cellid )) 
-    idlist.names=balanced %>% group_split(!!sym(group_var)) %>% lapply(., function(x) x %>% pull(!!sym(group_var)) %>% unique) %>% Reduce(c, .)
-    idlist=idlist %>% givenames(., idlist.names)
-    return(idlist)
-    
-  }else{
-  return(balanced %>% as.data.frame %>% col2names(., "cellid") %>% select(-cellid))
-    }
-    
-}
-     
-     
-################################################################################
-#segregate cells in a cellinfo object
-################################################################################
-
-segregate.cells=function(cellinfo, variables){
-rearranged.cells.df.list=cellinfo$cell.annotation  %>% names2col(., "cellid") %>% arrange(!!!syms(variables) ) %>% group_split(., !!sym(variables[1]))
-
-rear.names=lapply(rearranged.cells.df.list, function(x) x %>% pull(!!sym(variables[1])) %>% unique) %>% Reduce(c, .)
-
-rearranged.cell.annot=cellinfo$cell.annotation  %>% names2col(., "cellid") %>% arrange(!!!syms(variables)) %>% group_split(., !!sym(variables[1])) %>% bind_rows %>% as.data.frame %>%  col2names(., "cellid") 
-
-
-rearranged.cell.list=rearranged.cells.df.list %>% lapply(., function(x) x %>% as.data.frame %>% pull(cellid)) %>% givenames(., rear.names)
-rearranged.cells=rearranged.cells.df.list %>% lapply(., function(x) x %>% as.data.frame %>% pull(cellid))
-cellinfo$cell.list=rearranged.cell.list
-cellinfo$cell.annotation=rearranged.cell.annot %>% select(-cellid) %>% dplyr::select(all_of(variables))
-cellinfo$cells=rearranged.cells
-
-refresh.cellinfo(cellinfo)
-}
-
-
-cellinfo.segregate.cells=segregate.cells
-################################################################################
-# seriate cells with seurat
-################################################################################
-
-cellinfo.seriatecells.seurat=function(cellinfo, so , new.cells=T, ncells=100, return.scores=F){
-    
-          markerlist.original=cellinfo$markerlist
-          fcat("cleaning up markers...")
-          markerlist=cellinfo$markerlist[lapply(cellinfo$markerlist, function(x) length(x)>0) %>% Reduce(c, .)  ]
-          
-          sdi=setdiff(names(markerlist.original), names(markerlist))
-          if(length(sdi)>0){
-           fcat("no markers were found for the following clusters:", paste(sdi, collapse=",")) 
-          }
-            celltotals=list()
-            
-
-            fcat("Using Seurat Module Score method to rank cells...")
-            so <- AddModuleScore3(so, markerlist )
-            
-            
-            ordcellist=lapply(1:length(markerlist), function(x) {
-               fcat("rearranging cells of", names(markerlist)[x])
-              modulename= get.module.name(names(markerlist)[x])
-              fcat("modulescore name", modulename)
-              #sumcells=apply(so[markerlist[[x]],so %>% metadata %>% pull(), 2, sum)
-              fcat("available module scores are", so@meta.data %>% select(contains("mscore_group")) %>% colnames %>% paste(., collapse=","))
-              fcat("available marker names are", paste(names(markerlist) , collapse=","))
-              fcat("cellinfo$cell.group.variable is", cellinfo$cell.group.variable)
-              val=names(markerlist)[x]
-              all.ordered.cells<<-so@meta.data %>% dplyr::filter(!!sym(cellinfo$cell.group.variable)==!!val) 
-              all.ordered.cells= all.ordered.cells %>% dplyr::select(!!sym(modulename)) %>% arrange(!!sym(modulename)) 
-               
-              fcat("made allorderedcells", modulename)
-              all.ordered.cells=all.ordered.cells %>% rownames
-              if(!new.cells){
-               fcat("no new cells for", modulename)
-                # here we retrieve the reordered cells on the original list
-               
-                outputcells=all.ordered.cells[all.ordered.cells %in% cellinfo$cell.list[[names(markerlist)[x]]]]
-                
-              }else{
-                l=length(all.ordered.cells)
-               # retrieve the strongest cells in each cluster 
-                if(l<ncells){ncells=l}
-                  
-                 outputcells=all.ordered.cells[(l-ncells+1):l] 
-                
-                
-              }
-              
-              #celltotals[[x]]<<- rep(x, length(outputcells))
-             outputcells
-            }
-            ) %>% givename(., names(markerlist))
-            
-            ####################################################################
-            # after reordering cells for the clusters fr which there are markers,
-            #we modify the cells for those specific clusters, leaving the
-            #possibility to keep some cell clusters untouched if there are no
-            # no corresponding markers for them
-            ####################################################################
-          
-            fcat("updating new cell information on cellinfo...")
-            for(j in 1:length(ordcellist)){
-            
-           cellinfo$cell.list[[names(ordcellist)[j]]]=ordcellist[[j]] 
-            
-          }
-          ## markerlist has been cleaned to remove all sorts of faulty marker sets  so we replace it
-          fcat("updating revised marker sets on cellinfo...")
-            cellinfo$markerlist=markerlist  
-            
-          if(return.scores){
-           return(list(cellinfo=cellinfo, module.scores=so@meta.data %>% select(all_of(paste0(newnames, 1:length(newnames)))))) 
-          }else{
-           return(refresh.cellinfo.hard(cellinfo, cell.group.label=cellinfo$cell.metadata[1], marker.group.label=cellinfo$marker.metadata[1]))
-          }
-            
 }
 
 
 
 ################################################################################
-# save cellbygene h5ad
+# get peaks from bed in a file
 ################################################################################
 
-save.cellxgene=function(so, name="singlecellobject", path=paste0(config$out_root), reduction.use="umap"){
+read.bed.peaks <- function(path) {
+  # Find all .bed files in the path (recursive)
+  bed_files <- list.files(path, pattern = "\\.bed$", full.names = TRUE, recursive = TRUE)
   
+  # Read each file into a data frame and name the list elements
+  peak_list <- lapply(bed_files, function(f) read.table(f, header = FALSE, sep = "\t", stringsAsFactors = FALSE))
   
-  ##cell by gene does not work well with numerical seurat clusters
-  so@meta.data = so@meta.data %>% dplyr::mutate(seurat_clusters=paste0("cluster_", seurat_clusters))
-  ##cellxgene can only use the default umap projection as the one shown on the platform so we rename the desired one
-  if(reduction.use!="umap"){
-    so@reductions$umap=so@reductions[[reduction.use]]
-    colnames(so@reductions$umap@cell.embeddings)=c("UMAP_1", "UMAP_2")
-  }
+  # Set names: just the file name without path or extension
+  names(peak_list) <- tools::file_path_sans_ext(basename(bed_files))
   
-  savename=file.path(path, paste0(name, ".h5Seurat"))
-SaveH5Seurat(so, filename = savename)
-Convert(savename, dest = "h5ad")
+  return(peak_list)
 }
 
 
 
+combine_first_non_na <- function(df, ..., new_col = "combined") {
+  vars <- tidyselect::eval_select(rlang::expr(c(...)), df)
 
-filter.marker.sets <- function(seurat_obj, marker_list) {
-  # Get all genes in the Seurat object
-  genes_in_obj <- rownames(seurat_obj)
-  
-  # Keep only marker sets that overlap with Seurat genes
-  filtered_list <- lapply(marker_list, function(gene_set) {
-    intersect(gene_set, genes_in_obj)
+  df[[new_col]] <- apply(df[vars], 1, function(row) {
+    first_non_na <- row[!is.na(row)]
+    if (length(first_non_na) > 0) first_non_na[1] else NA
   })
-  
-  # Remove empty gene sets
-  filtered_list <- filtered_list[lengths(filtered_list) > 0]
-  
-  return(filtered_list)
+
+  return(df)
 }
- 
-################################################################################
-# improved module score wrapper around seurat's AddModuleScore function that gets rid of small lists and surgically removes pesky numbers
-################################################################################
 
-AddModuleScore3=function(object, features,rcache=NULL, ...){
-  if(is.null(rcache)){
-    rcache=paste0("modulescore_metadata_id_", digest::digest(package.vars(object, features)))
-  }
-  
-  features=filter.marker.sets(object, features)
-  fcat("total number of viable sets to test:", length(as.list(features)))
-  
-  simpleCache(rcache, {
-  features=features[lapply(features, function(x) if(length(x)<1){F}else{T}) %>% Reduce(c, .)]
-  names(features)=paste0("mscore_group_",names(features), "_s") #add an artificial flag to be later removed, thereby patching AddModuleScore's bizarre name modification
-  object=AddModuleScore(object, features, name=names(features))
 
-  #AddModuleScore adds numbers to each signature's name so we find those new names
-modnames=paste0(names(features), 1:length(features))
-fcat("cleaning up ")
 
-allcols=colnames(object@meta.data)
-
-which.to.change=(allcols %in% modnames)
-allcols[which.to.change]=gsub("_s[0-9]+$", "", allcols[which.to.change] )
-
-#clean.names=gsub("mscore_group_", "", names(allcols[which.to.change]))
-
-#if the cluster names are numbers after trimming, then leave the ms_cluster prefix in.
-#if(!is.number.like(clean.names)){
-#  allcols[which.to.change]=clean.names
+#for(tl in 1:length(treatments.list)){
+#metadata.seruggia2= metadata.seruggia2 %>% dplyr::mutate(!!(paste0("tmnt.",tl)):=paste(!!!syms(treatments.list[[tl]]$reagents), sep="-"))
 #}
 
-colnames(object@meta.data)=allcols
-object@meta.data[, allcols[which.to.change],drop=F]
-}, assignToVar="metamat", reload=T)
-object=AddMetaData(object, metamat)
-object
-}    
+#metadata.seruggia2=metadata.seruggia2 %>% dplyr::mutate(tmnt.full= paste_(!!!syms(paste0("tmnt.", treatment.steps))))
 
+#fwrite(metadata.seruggia2, file="~/metadata/samplesheet_seruggia_2024_2_conditions_annotated.csv")
 
 ################################################################################
-# functions for data import
+#annotating our own sample sheet with the reagent info
 ################################################################################
 
+extractrbc1 <- Vectorize(function(x){
+  ifelse(grepl("RBC-step-1", x), substr(x, 12, 12), extractrbc12(x))
+}, USE.NAMES = FALSE)
 
-add.row.suffix=function(df, suf="-1"){
-  
-  rn=rownames(df)
-  rn=paste0(rn, suf)
-  
-  rownames(df)=rn
-  
-}
+# Round 1, type 2
+extractrbc12 <- Vectorize(function(x){
+  ifelse(grepl("RBC-step1", x), substr(x, 11, 11), extractrbc21(x))
+}, USE.NAMES = FALSE)
 
-import.dataset=function(folder){
-CreateSeuratObject(Read10X_h5(file.path(config$data_root, folder, "filtered_feature_bc_matrix.h5")), project=strsplit(folder, split="/")[[1]][2])
-}
+# Round 1 for second rounds
+extractrbc21 <- Vectorize(function(x){
+  ifelse(grepl("RBC-step-2--", x), substr(x, 13, 13), extractvemain(x, "1"))
+}, USE.NAMES = FALSE)
 
-import.clones=function(folder){
-fread(file.path(config$data_root, folder, "clones.txt")) %>% as.data.frame %>% dplyr::mutate(cell_id=paste0(cell_id, "-1"), clone_nr_ds=paste_(strsplit(folder, split="/")[[1]][2],clone_nr )) %>% col2names(., "cell_id") 
-}
+# Round 2 for second rounds
+extractrbc22 <- Vectorize(function(x){
+  ifelse(grepl("RBC-step-2--", x), substr(x, 14, 14), extractvemain(x, "2"))
+}, USE.NAMES = FALSE)
 
+# Combo round
+extractrbc.combo <- Vectorize(function(x){
+  ifelse(grepl("RBC-step-2--", x), substr(x, 13, 14), extractvemain(x, "combo"))
+}, USE.NAMES = FALSE)
 
-################################################################################
-# set markers from a collection of options
-################################################################################
-
-setmarkers<- function(so, markerset=1){
-  so$RNA@misc$markers=so$RNA@misc[[markerset]]$markers
-  so$RNA@misc$top_markers=so$RNA@misc[[markerset]]$top_markers
-  so
-}
-
-
-
-plot.cluster.sizes <- function(seurat_obj, cluster_var = "seurat_clusters") {
-  # Check if the clustering variable exists
-  if (!cluster_var %in% colnames(seurat_obj@meta.data)) {
-    stop(paste("Clustering variable", cluster_var, "not found in metadata."))
-  }
-  
-  # Count cells per cluster
-  cluster_counts <- seurat_obj@meta.data %>%
-    group_by(!!sym(cluster_var)) %>% 
-    summarise(n=n()) %>%
-    arrange(desc(n)) %>%
-    mutate(cluster_var := factor(!!sym(cluster_var), levels = !!sym(cluster_var)))  # preserve order
-  
-  # Plot
-  ggplot(cluster_counts, aes(x = !!sym(cluster_var), y = n)) +
-    geom_bar(stat = "identity", fill = "#4C72B0") +
-    labs(x = "Cluster", y = "Number of cells", title = "Cell count per cluster") +
-    theme_minimal() +
-    theme(axis.text.x = element_text(angle = 45, hjust = 1))
-}
-
-
-
-is.numeric.like <- function(x) {
-  all(!is.na(suppressWarnings(as.numeric(x))))
-}
-
-get.module.name=function(x) paste0("mscore_group_", x)
-
-
-
-
-cellinfo.order.groups.natural=function(cellinfo){
-cellinfo$cell.list=cellinfo$cell.list[cellinfo$cell.list %>% names %>% mixedorder]
-cellinfo$markerlist=cellinfo$markerlist[cellinfo$markerlist %>% names %>% mixedorder]
-refresh.cellinfo(cellinfo)
-}
-
-
-
-keep.cellgroups.pattern=function(cellinfo, pattern){
- cellinfo$cell.list = cellinfo$cell.list[grepl(pattern, names(cellinfo$cell.list))] 
-refresh.cellinfo(cellinfo)
- }
-
-
-################################################################################
-# subset specific clusters
-################################################################################
-
-subset.clusters=function(so, clusvar, clusters){
-  
- so[ , so@meta.data %>% filter(!!sym(clusvar) %in% clusters) %>% rownames]  
-  
-}
-
-
-################################################################################
-# get function defaults for quick debugging
-################################################################################
-
-get.function.defaults <- function(fun) {
-  # If input is a string, get the function by name
-  if (is.character(fun)) {
-    fun <- get(fun, mode = "function", envir = parent.frame())
+# Main extractor
+extractvemain <- Vectorize(function(x, mode){
+  if (grepl("RBC-Ve2-", x)) {
+    extr <- strsplit(x, split = '-')[[1]]
+  } else {
+    extr <- NA
   }
 
-  # Get formals (arguments and defaults)
-  formals_list <- formals(fun)
-
-  # Replace missing default values with NULL
-  defaults <- lapply(formals_list, function(x) {
-    if (is.symbol(x)) return(NULL)
-    eval(x)
-  })
-
-  return(defaults)
-}
-
-################################################################################
-# function to retrieve the loaded genes
-################################################################################
-
-get.loaded.genes=function(so, npcs=5, ngenes=5){
-lapply(1:npcs, function(x) Loadings(so.pax6) %>% as.data.frame %>% arrange(-!!sym(paste0("PC_",x))) %>% head(ngenes) %>% rownames) %>% Reduce(c, .)
-}
-################################################################################
-# workflow t make a tidy heatmap out of a seurat object and its respective cellinfo
-################################################################################
-heatmap.workflow=function(so, cellinfo, colorlist=allcolors, extra.genes=NULL, extra.annotation=NULL){
-cellinfo2=add.cell.annotation(so, cellinfo=cellinfo , vars = "hto_demux")
-cellinfo3=cellinfo2 %>% segregate.cells(., variables = c(cellinfo$cell.group.variable, "hto_demux")) %>% cellinfo.order.groups.natural
-if(is.null(colorlist[[cellinfo3$cell.group.variable]])){
-  
-  colorlist[[cellinfo3$cell.group.variable]]<-rainbow(length(cellinfo3$cell.list)) %>% givename(., names(cellinfo3$cell.list))
-allcolors[[cellinfo3$cell.group.variable]]<<-rainbow(length(cellinfo3$cell.list)) %>% givename(., names(cellinfo3$cell.list))
-}
-fcat(dput(colorlist[[cellinfo3$cell.group.variable]]))
-
-if(!is.null(extra.annotation)){
-  cellinfo3=cellinfo3 %>% add.cell.annotation(so, ., extra.annotation)
-}
-#allcolors[[cellinfo3$marker.group.variable]]=rainbow(length(cellinfo3$markerlist)) %>% givename(., names(cellinfo3$markerlist))
-hm=cellinfo.heatmap(so=so, cellinfo=cellinfo3, assay="SCT", genes.to.label = c((cellinfo3 %>% adjust.markers(., 3))$markers, landmark.genes, extra.genes) , colorlist=allcolors)
-
-tpdf(paste0("heatmap_",Project(so),"_by_", cellinfo$cell.group.variable),  sca=6)
-print(hm)
-dev.off()
-}
-
-
-
-
-################################################################################
-# For each cell, calculate what percentage of the markers of each signatutre are expressed.
-################################################################################
-
-AddMarkerPercentages <- function(seurat_obj, marker_list, assay = NULL, slot = "data") {
-  if (is.null(assay)) {
-    assay <- DefaultAssay(seurat_obj)
+  if (is.na(extr)) {
+    return(NA)
   }
-  
-  # Extract expression matrix
-  expr_mat <- GetAssayData(seurat_obj, assay = assay, slot = slot)
-  
-  for (marker_name in names(marker_list)) {
-    markers <- marker_list[[marker_name]]
-    
-    # Keep only markers present in data
-    markers_present <- intersect(markers, rownames(expr_mat))
-    
-    if (length(markers_present) == 0) {
-      warning(paste("No markers found in data for", marker_name))
-      seurat_obj[[marker_name]] <- NA
-      next
-    }
-    
-    # Expression logical matrix: TRUE if expressed (>0)
-    expr_logical <- expr_mat[markers_present, , drop = FALSE] > 0
-    
-    # Calculate % expressed per cell
-    percent_expr <- Matrix::colSums(expr_logical) / length(markers_present) * 100
-    
-    # Add to metadata
-    seurat_obj[[paste0("pct_group_",marker_name)]] <- percent_expr
+
+  if (grepl("TGF|IL4", extr[3]) && !(mode %in% c("1"))) {
+    return(paste0(extr[3:4], collapse = "-"))
+  } else {
+    return(extractvesub(extr[3], mode))
   }
+}, vectorize.args = "x", USE.NAMES = FALSE)
+
+# Sub extractor
+extractvesub <- Vectorize(function(x, mode){
+  ifelse(mode == "1", substr(x, 1, 1), 
+         ifelse(mode == "2", substr(x, 2, 2), 
+                x))
+}, USE.NAMES = FALSE)
+
+
+
+
+get.treatment=Vectorize(function(x,tmnt ){
+ treatments=list(
+  "1"= list(epo=1, insulin.heparin=0, hydrocortisone=0) ,
+  "2"=list(epo=1, insulin.heparin=0, hydrocortisone=1) ,
+  "3"=list(epo=1, insulin.heparin=1, hydrocortisone=0), 
+  "4"=list(epo=1, insulin.heparin=1, hydrocortisone=1), 
+  "5"=list(epo=3, insulin.heparin=0, hydrocortisone=0), 
+  "6"=list(epo=3, insulin.heparin=0, hydrocortisone=1), 
+  "7"=list(epo=3, insulin.heparin=1, hydrocortisone=0), 
+  "8"=list(epo=3, insulin.heparin=1, hydrocortisone=1) 
+ )
+ code=c(A=1,B=2, C=3, D=4, E=5, F=6, G=7, H=8)
   
-  return(seurat_obj)
-}
-
-
-plot.signature.profiles=function(so, cellinfo, colorlist=allcolors){
-install_and_load("patchwork")
-fcat("calculating signatures")
-so=AddModuleScore3(so, cellinfo$markerlist)  
-fcat("calculating perentages")
-so=AddMarkerPercentages(so, cellinfo$markerlist)  
-
-if(is.null(colorlist[[cellinfo$cell.group.variable]])){
-  fcat("creating colors for categories")
-  colorlist[[cellinfo$cell.group.variable]]<-rainbow(length(cellinfo$cell.list)) %>% givename(., names(cellinfo$cell.list))
-allcolors[[cellinfo$cell.group.variable]]<<-rainbow(length(cellinfo$cell.list)) %>% givename(., names(cellinfo$cell.list))
-}
-
-plt=lapply(1:length(cellinfo$markerlist), function(x){
+if(x %in% names(code)){
+  out=treatments[[code[x]]][[tmnt]]
+}else{
+ if(x %in% names(treatments)){
+ out=treatments[[x]][[tmnt]]
+   
+   }else{
+    out=NA 
+   }
   
-ggplot(so@meta.data, aes(x=!!sym(paste0("mscore_group_",names(cellinfo$markerlist)[x])), y=!!sym(paste0("pct_group_",names(cellinfo$markerlist)[x])), color=!!sym(cellinfo$cell.group.variable)))+geom_point()+scale_color_manual(values=allcolors[[cellinfo$cell.group.variable]])
-
-  }) %>% Reduce('+', .)
-plt
 }
+  
+}, USE.NAMES=F)
+
+annotate.rbc=function(df) df %>% dplyr::mutate(rbc.round1=as.integer(extractrbc1(Experiment)), rbc.round2=extractrbc22(Experiment), rbc.combo=extractrbc.combo(Experiment))
+
+
 
 
 ################################################################################
@@ -10984,361 +9870,654 @@ plt
 ################################################################################
 
 
-marker.umap<- function(seurat_obj, 
-                            markers, 
-                            colorby, 
-                            neighbors = 30, 
-                            min_dist = 0.3, 
-                            repulsion_strength = 1, mscorevar=NULL) {
+vector.list.to.df= function(lst){
   
-  # Ensure markers are present in the SCT assay
-  markers_present <- intersect(markers, rownames(seurat_obj[["RNA"]]))
-  if (length(markers_present) == 0) {
-    stop("None of the markers are present in the RNA assay.")
-  }
+  bdf=lapply(1:length(lst), function(x){
+    
+  df=as.data.frame(lst[[x]]) %>% dplyr::mutate(class=names(lst)[[x]]) %>% givecolnames(.,1, nms="value")
+  df$duplicated.inner=duplicated(df$value)
+  df
+  }) %>% bind_rows
+
+bdf$duplicated.outer=duplicated(bdf$value)
   
-  # Create new assay with only these markers
-  new_assay <- seurat_obj[["SCT"]][markers_present, ]
-  seurat_obj[["marker_assay"]] <- CreateAssayObject(
-                                                    data = new_assay)
+
+    #bdf= bdf %>% dplyr::select(-duplicated.inner) %>% dplyr::select(-duplicated.outer)
+    bdf.nodups=bdf %>% dplyr::filter(!duplicated.inner, !duplicated.outer)
+    bdf.dups = bdf %>% dplyr::filter(duplicated.inner, duplicated.outer)
+    
+
   
-  DefaultAssay(seurat_obj) <- "marker_assay"
-  
-  # Run PCA & UMAP
-  seurat_obj <- ScaleData(seurat_obj, features = markers_present, verbose = FALSE)
-  seurat_obj <- RunPCA(seurat_obj, features = markers_present, verbose = FALSE)
-  seurat_obj <- RunUMAP(seurat_obj, dims = 1:min(length(markers_present), 10),
-                        n.neighbors = neighbors,
-                        min.dist = min_dist,
-                        repulsion.strength = repulsion_strength,
-                        verbose = FALSE)
-  
-  # Make UMAP plot
-  if(colorby=="seurat_clusters"){cols= adjust.seurat.colors(seurat_obj)}else{ allcolors[[colorby]]}
-  p <- DimPlot(seurat_obj, reduction = "umap", group.by = colorby) + 
-    ggtitle(paste("UMAP on markers:", paste(markers_present, collapse = ", ")))+scale_color_manual(values=cols)
-  if(!is.null(mscorevar)){
-  p2 <- FeaturePlot(seurat_object, reduction="umap", features=mscorevar)
-  }else{p2<-FeaturePlot(seurat_object, reduction="umap", features=markers_present[1])}
-  # Cleanup to free memory
-  gc()
-  
-  return(p)
+list(dups=bdf.dups, nodups=bdf.nodups %>% dplyr::select(-duplicated.inner) %>% dplyr::select(-duplicated.outer) %>% col2names(., "value"))
+
+
 }
 
-
-signature_expression_by_percentile <- function(seurat_obj, signature_genes, var, nbreaks = 5) {
-  
-  # Keep only genes present in object
-  signature_genes <- intersect(signature_genes, rownames(seurat_obj))
-  if (length(signature_genes) == 0) stop("None of the signature genes are present in the object.")
-  
-  # Extract metadata variable
-  meta_var <- seurat_obj[[var]][, 1]
-  if (!is.numeric(meta_var)) stop("The variable must be numeric to calculate percentiles.")
-  
-  # Create percentile bins
-  breaks <- quantile(meta_var, probs = seq(0, 1, length.out = nbreaks + 1), na.rm = TRUE)
-  bin_labels <- paste0("P", 1:nbreaks)
-  seurat_obj$percentile_bin <- cut(meta_var, breaks = breaks, labels = bin_labels, include.lowest = TRUE)
-  
-  # Get expression data (logical: > 0 = expressed)
-  expr_data <- GetAssayData(seurat_obj, slot = "data")[signature_genes, ]
-  expr_binary <- expr_data > 0
-  
-  # Calculate percentage of expressing cells per bin & gene
-  results <- data.frame()
-  for (gene in signature_genes) {
-    tmp <- data.frame(
-      gene = gene,
-      bin = bin_labels,
-      pct_expr = sapply(bin_labels, function(b) {
-        cells_in_bin <- WhichCells(seurat_obj, expression = percentile_bin == b)
-        if (length(cells_in_bin) == 0) return(0)
-        mean(expr_binary[gene, cells_in_bin]) * 100
-      })
-    )
-    results <- rbind(results, tmp)
-  }
-  
-  # Plot stacked barplot
-  p <- ggplot(results, aes(x = gene, y = pct_expr, fill = bin)) +
-    geom_bar(stat = "identity", position = "stack") +
-    ylab("% Cells Expressing") + xlab("Gene") +
-    theme_minimal() +
-    theme(axis.text.x = element_text(angle = 45, hjust = 1))
-  
-  return(p)
-}
-
-
-library(Seurat)
-
-add_zero_cells <- function(seurat_obj, n_cells = 100, cell_prefix = "zeroCell",rerun=F ) {
-  
-  # Get gene names and create matrix of zeros
-  gene_names <- rownames(seurat_obj)
-  zero_mat <- Matrix::Matrix(0, nrow = length(gene_names), ncol = n_cells, sparse = TRUE)
-  rownames(zero_mat) <- gene_names
-  colnames(zero_mat) <- paste0(cell_prefix, "_", seq_len(n_cells))
-  
-  # Add new cells to the raw counts
-  counts_combined <- cbind(GetAssayData(seurat_obj, slot = "counts"), zero_mat)
-  seurat_obj <- SetAssayData(seurat_obj, slot = "counts", new.data = counts_combined)
-  
-  # Add dummy metadata
-  zero_meta <- data.frame(row.names = colnames(zero_mat), dummy = TRUE, seurat_clusters="mock_zero")
-  meta_combined <- rbind(seurat_obj@meta.data, zero_meta)
-  meta_combined$dummy[is.na(meta_combined$dummy)] <- FALSE
-  seurat_obj@meta.data <- meta_combined
-  
-  
-  # Re-run transformations so new cells are included
-  
-  if(rerun){
-  DefaultAssay(seurat_obj) <- "RNA"
-  seurat_obj <- NormalizeData(seurat_obj)
-  seurat_obj <- FindVariableFeatures(seurat_obj)
-  seurat_obj <- ScaleData(seurat_obj)
-  seurat_obj <- RunPCA(seurat_obj)
-  seurat_obj <- RunUMAP(seurat_obj, dims = 1:20)
-  }
-  return(seurat_obj)
-}
+################################################################################
+# subset and process a deseq2 object
+################################################################################
 
 
 
-plot_marker_expression_fraction <- function(seurat_obj, markers, group_var, colorlist=allcolors) {
-  # Ensure grouping variable exists in metadata
-  if (!(group_var %in% colnames(seurat_obj@meta.data))) {
-    stop(paste("Grouping variable", group_var, "not found in Seurat metadata."))
-  }
-  
-  # Extract expression matrix for markers
-  expr <- FetchData(seurat_obj, vars = c(markers, group_var))
-  
-  # Reshape to long format
-  expr_long <- expr %>%
-    pivot_longer(cols = all_of(markers), names_to = "gene", values_to = "expr") %>%
-    mutate(expr_binary = expr > 0) # TRUE/FALSE expression indicator
-  
-  # Compute % of cells expressing per group per gene
-  summary_df <- expr_long %>%
-    group_by(!!sym(group_var), gene) %>%
-    summarise(
-      pct_expressing = 100 * sum(expr_binary) / n(),
-      .groups = "drop"
-    )
-  
-  # Plot
-  p <- ggplot(summary_df, aes(x = gene, y = pct_expressing, fill = !!sym(group_var))) +
-    geom_col(position = "dodge") +
-    theme_minimal(base_size = 14) +
-    ylab("% cells expressing") +
-    xlab("Marker gene") +
-    #theme(axis.text.x = element_text(angle = 45, hjust = 1))+
-    scale_fill_manual(values=colorlist[[group_var]])+facet_wrap(~gene, scales="free_x", nrow=5)
-  
-  return(p)
-}
 
+subset.and.process.dds <- function(dds, peaks, samples = NULL, vst_name = "vst", varr="rbc.combo", meta) {
+  # Remove duplicated peaks
+  unique_peaks <- unique(peaks)
 
-cellinfo.plotfeatures=function(so, cellinfo, markers.per.group=3,umap.number=NULL){
-  
-
-   nms=names(so.mes@reductions)
-   unms=nms[grepl("umap", nms)]
+    # Subset metadata
+  if(is.null(meta)){
+  meta <- as.data.frame(colData(dds))
    
-  if(is.null(umap.number)){
-   rr=unms[length(unms)]# using the last umap generated
-  }else{
-   rr=unms[umap.number] 
+  
   }
   
-plt=FeaturePlot(so.mes, features=adjust.markers(cellinfo, markers.per.group)$markers, reduction=rr)  
+  meta.f <- meta[samples,, drop=F] %>% as.data.frame %>% dplyr::filter(!is.na(!!sym(varr)))
+  
+  fcat("removed", nrow(meta)-nrow(meta.f), "samples with NA category")
+  
+  removed= setdiff(rownames(meta), rownames(meta.f))
+ 
+  fcat("removed", paste(removed, collapse=","))
+    
+fcat("nrow(meta):", nrow(meta.f), "ncol(meta):",ncol(meta.f))
+  
+  
+  
+    # Subset counts
+  counts_filtered <- counts(dds)[rownames(dds) %in% unique_peaks, rownames(meta.f), drop=F]
+  
+fcat("nrow(counts):", nrow(counts_filtered), "ncol(counts):",ncol(counts_filtered))
 
-plt}
+
+  # Build new DESeqDataSet
+  dds_new <- DESeqDataSetFromMatrix(
+    countData = counts_filtered,
+    colData   = meta.f,
+    design    = ~dsname + rbc.combo
+  )
+  
+  # Estimate size factors
+  dds_new <- estimateSizeFactors(dds_new)
+  
+  # Apply VST
+  rld <- varianceStabilizingTransformation(dds_new, blind = FALSE)
+  
+  # Add vst assay
+  assay(dds_new, vst_name) <- assay(rld)
+  
+  return(dds_new)
+}
+
+
 
 
 
 ################################################################################
-#n relabel catrgories
+# sample pair point plot, ranking the samples based on the residuals of a linear model
 ################################################################################
 
-reset.categories<- function(seurat_obj, var_name, new_var_name = NULL) {
-  # Extract variable from metadata
-  var <- seurat_obj@meta.data[[var_name]]
+
+sample.point.plot = function(s1, s2, peaks = NULL, lm_fit=NULL, sz=.2) {
+  s1=make.names(s1)
+  s2=make.names(s2)
+  fcat(1)
+  df = fixcolnames(counts)[peaks,c(s1, s2), drop = F] %>% as.data.frame 
+head(df)
+  # it linear model
+  fcat(2)
+  if(is.null(lm_fit)){
+  lm_fit <- lm(as.formula(paste(s2, "~", s1)), data = df)
+  }
+  df$expected.linear=predict(lm_fit, data=fixcolnames(vsd)[pks, s1])
+  # Calculate residuals
+  fcat(3)
+  df$residual <- resid(lm_fit)
+
+  # Rank residuals by absolute value (can also use signed residuals if desired)
+  fcat(4)
+  df$res_rank <- rank(df$residual)
+
+  # Normalize rank to [0,1] for color gradient
+  fcat(5)
+  df$res_rank_scaled <- (df$res_rank - mean(df$res_rank)) /(sd(df$res_rank)/df$expected.linear)
+
+  fcat(6)
+  plt = ggplot(df, aes(x = log(!!sym(s1)), y = log(!!sym(s2)))) +
+    geom_point(aes(color = res_rank_scaled), size=sz) +
+    scale_color_gradient2(low = "blue", mid = "grey", high = "red" )+
+    coord_cartesian(xlim=c(0,10), ylim=c(0,10))
+
+  fcat(7)
+  print(plt)
+
+  fcat(8)
+  list(plot = plt, fit = lm_fit, df=df)
+}
+
+
+
+################################################################################
+# 
+################################################################################
+
+make.class.target.list <- function(df, colname) {
+  unique_vals <- unique(df[[colname]])
+  result <- setNames(
+    lapply(unique_vals, function(val) {
+      list(classvar = colname, targets = as.character(val))
+    }),
+    unique_vals
+  )
+  return(result)
+}
+
+
+
+
+conditional.suffix <- function(df, search.var, target.var, pattern, suf) {
   
-  # Ensure it's a factor
-  var <- as.factor(var)
+library(dplyr)
+
+ 
   
-  # Sort the levels and reassign them to 1...n
-  new_labels <- setNames(seq_along(sort(levels(var))), levels(var))
+  df %>%
+    dplyr::mutate(
+      !!sym(target.var) := ifelse(
+        str_detect(!!sym(search.var), pattern),
+        paste0(!!sym(target.var), suf),
+        !!sym(target.var)
+      )
+    )
+}
+
+
+################################################################################
+# common prefix
+################################################################################
+
+
+common.prefix <- function(strings) {
+  if (length(strings) == 0) return("")
   
-  # Apply mapping
-  var_numeric <- as.character(new_labels[as.character(var)])
+  # Split all strings into characters
+  split_strings <- strsplit(strings, "")
   
-  # If new_var_name not provided, overwrite
-  if (is.null(new_var_name)) {
-    seurat_obj@meta.data[[var_name]] <- var_numeric
+  # Find the minimum length among the strings
+  min_length <- min(sapply(split_strings, length))
+  
+  prefix <- character()
+  
+  for (i in seq_len(min_length)) {
+    # Take the ith character from all strings
+    chars_at_i <- sapply(split_strings, `[[`, i)
+    
+    # If all characters are the same, add to prefix
+    if (length(unique(chars_at_i)) == 1) {
+      prefix <- c(prefix, chars_at_i[1])
+    } else {
+      break
+    }
+  }
+  
+  paste(prefix, collapse = "")
+}
+
+find.class.prefixes= function(mat, class.variable, prefix.variable, new.column.name){
+  
+classes=mat %>% pull(!!sym(class.variable)) %>% unique 
+
+prefix.list=lapply(classes, function(x) {
+  
+  mat %>% dplyr::filter(class.variable ==x ) %>% pull(prefix.variable) %>% common.prefix
+}) %>% givename(., classes)
+fcat(prefix.list)
+
+get.class.common.prefix=function(clss, prefix.list) prefix.list[[clss]]
+
+mat %>% dplyr::mutate(!!sym(new.column.name):= get.class.common.prefix(!!sym(class.variable), !!prefix.list))
+
+  
+}
+
+
+################################################################################
+# transform vector into percentiles
+################################################################################
+
+
+transform.to.percentiles <- function(x) {
+  # Ensure input is numeric
+  if (!is.numeric(x)) stop("Input must be a numeric vector.")
+  
+  # Compute percentile rank for each element
+  ranks <- rank(x, ties.method = "average")  # Handle ties by averaging ranks
+  percentiles <- (ranks - 1) / (length(x) - 1)
+  
+  return(percentiles)
+}
+
+
+################################################################################
+# theme clean minimal without lines inside the plot
+################################################################################
+
+theme_clean_minimal <- function(base_size = 11) {
+  theme_minimal(base_size = base_size) +
+    theme(
+      panel.grid.major = element_blank(),  # remove major grid lines
+      panel.grid.minor = element_blank(),  # remove minor grid lines
+      panel.border = element_blank(),      # no border
+      axis.line = element_blank()          # remove axis lines
+    )
+}
+
+
+
+################################################################################
+# english number
+################################################################################
+
+english.number<- function(number) {
+  if (!requireNamespace("english", quietly = TRUE)) {
+    install.packages("english")
+  }
+  library(english)
+  
+  result <- as.character(english::as.english(number))
+  return(result)
+}
+
+
+
+################################################################################
+# move cache with specific string directly to the current version
+################################################################################
+transfer.cache.direct=function(cachestring, obj=NULL, previous.version=NULL){
+if(!is.null(previous.version)){  
+new.string=paste_(cachestring, "version", previous.version)
+  
+simpleCache(new.string, assignToVar="obj", reload=T)
+}  
+simpleCache(cachestring %>% addversion, {obj}, assignToVar="obj", recreate=T)
+obj  
+}
+
+
+
+
+pasteall=function(x, collapse="_"){
+ paste(x, collapse=collapse) 
+}
+
+################################################################################
+# generate reagent panel
+################################################################################
+
+plot_treatment_config <- function(df) {
+  
+  # Identify treatment columns (letters + dot + number)
+  treat_cols <- grep("^[A-Za-z]+\\.[0-9]+$", names(df), value = TRUE)
+  
+  # Pivot longer
+  df_long <- df %>%
+    pivot_longer(cols = all_of(as.numeric(treat_cols)), names_to = "treatment", values_to = "value") %>%
+    dplyr::mutate(value = replace_na(value, 0)) %>%   # treat NA as 0
+    filter(value != 0)                         # drop zeros/NA
+     
+  # Plot
+  ggplot(df_long, aes(x = tmnt.full, y = treatment)) +
+    geom_point(aes(size = value), color = "black") +
+    theme_bw() +
+    theme(
+      axis.text.x = element_text(angle = 90, hjust = 1),
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank()
+    ) +
+    labs(x = "Configuration", y = "Treatment", size = "Value")
+}
+  
+
+################################################################################
+# sort plot paths
+################################################################################
+
+
+sort.plots.by.date <- function(path=config$plotpath, move = TRUE) {
+  # Ensure the path exists
+  if (!dir.exists(path)) {
+    stop("The specified path does not exist.")
+  }
+  
+  # Get all files in the path
+  files <- list.files(path, full.names = TRUE)
+  
+  # Filter only files that start with YYYY-MM-DD
+  pattern <- "^\\d{4}-\\d{2}-\\d{2}"
+  valid_files <- files[grepl(pattern, basename(files))]
+  
+  if (length(valid_files) == 0) {
+    message("No files with YYYY-MM-DD timestamp found.")
+    return(invisible(NULL))
+  }
+  
+  for (file in valid_files) {
+    filename <- basename(file)
+    
+    # Extract YYYY-MM-DD
+    timestamp <- sub(sprintf("(%s).*", pattern), "\\1", filename)
+    
+    # Extract YYYY-MM
+    year_month <- substr(timestamp, 1, 7)
+    
+    # Create subfolder
+    target_dir <- file.path(path, year_month)
+    if (!dir.exists(target_dir)) {
+      dir.create(target_dir, recursive = TRUE)
+    }
+    
+    # Define target path
+    target_file <- file.path(target_dir, filename)
+    
+    # Move or copy file
+    if (move) {
+      file.rename(file, target_file)
+    } else {
+      file.copy(file, target_file, overwrite = TRUE)
+    }
+  }
+  
+  message("Files organized successfully.")
+}
+
+################################################################################
+# sea4rch patterns in the cache directory
+################################################################################
+
+grep.cache <- function(pattern, path = "~/mnt_out/rcache", ignore_case = TRUE, recursive = TRUE) {
+  # Expand the path (so "~" works)
+  path <- path.expand(path)
+  
+  # Check if the directory exists
+  if (!dir.exists(path)) {
+    stop("Directory does not exist: ", path)
+  }
+  
+  # List files matching the pattern
+  files <- list.files(
+    path = path,
+    pattern = pattern,
+    ignore.case = ignore_case,
+    recursive = recursive,
+    full.names = TRUE
+  )
+  
+  return(files)
+}
+  
+  
+################################################################################
+# purify list from undesired intersections
+################################################################################
+make.unique.list=function(lst){
+  attr(gplots::venn(lst), "intersections")[names(lst)]
+}
+
+
+find.membership <- Vectorize( function(x, lst) {
+  # Check input types
+  if (!is.character(x) || length(x) != 1) {
+    stop("x must be a single string.")
+  }
+  if (is.null(names(lst))) {
+    stop("lst must be a named list.")
+  }
+
+  # Find which list elements contain x
+  hits <- names(lst)[sapply(lst, function(v) x %in% v)]
+
+  # Return results
+  if (length(hits) == 0) {
+    return(NA_character_)
+  } else if (length(hits) == 1) {
+    return(hits)
   } else {
-    seurat_obj@meta.data[[new_var_name]] <- var_numeric
+    return(paste(sort(hits), collapse = "&"))
   }
+},vectorize.args="x", USE.NAMES=F)
+
+
+xyplot=function(tab, x, y, colorby="MYCN_status", legend=T, legend.position=ifelse(legend, "bottom", "none"), sz=1, title=colorby){
+# corr <- cor(analysis.list$gpcdf[[x]], analysis.list$gpcdf[[y]])
+(ggplot(tab, aes(x=!!sym(x),y=!!sym(y) ))+
+geom_point( aes(color=!!sym(colorby)), size=sz)+
+scale_color_manual(values=allcolors[[colorby]])+
+theme_classic()+theme(legend.position = legend.position)+
+guides(color = guide_legend(nrow = 1))+
+ggtitle(title)) %>% ggMarginal(., type="density", groupFill=T, groupColour=T)
+}
+
+
+
+################################################################################
+# transform each column of a matrix into percentiles
+################################################################################
+
+make.pctile.columns <- function(vsd2) {
+  vsdp <- lapply(1:ncol(vsd2), function(x) {
+    transform.to.percentiles(vsd2[, x, drop = FALSE])
+  }) %>%
+    Reduce(cbind, .) %>%
+    as.data.frame() %>%
+    giverownames(nms = rownames(vsd2)) %>%
+      givecolnames(nms=colnames(vsd2)) 
   
-  return(seurat_obj)
+  return(vsdp)
+}
+  ##############################################################################
+  # filter a value or higher
+  ##############################################################################
+
+filter.matrix.higher=function(vsdp, pthresh, negative.value=0){
+vsdp %>% apply(., c(1,2), function(x) ifelse(x>=pthresh, x, negative.value))
 }
 
 
 ################################################################################
-# smooth based on neighbors so w don't have random cells flying in between.
+# effect size plot on several peak groups, and treatments facetted by treatment
 ################################################################################
 
-relabel_by_neighbors <- function(seurat_obj, group_var, graph_name = "RNA_snn") {
-  # Extract neighbor graph
-  g <- seurat_obj@graphs[[graph_name]]
-  if (is.null(g)) stop(paste("Graph", graph_name, "not found in Seurat object."))
+effect.size.plot=function(delist, concordance.peaks, thr=0, pval=0.05, exclude.cat="concordance", exclude="other", colorlist=allcolors){
   
-  # Ensure grouping variable exists
-  if (!(group_var %in% colnames(seurat_obj@meta.data))) {
-    stop(paste("Grouping variable", group_var, "not found in metadata."))
-  }
+  check.concordance=function(x){
+ifelse(x %in% concordance.peaks$concordant.open, "concordant.open", 
+  ifelse(x %in% concordance.peaks$discordant, "discordant", 
+    ifelse(x %in% concordance.peaks$concordant.closed, "concordant.closed", "other")))
+}
   
-  labels <- seurat_obj@meta.data[[group_var]]
-  new_labels <- labels
   
-  # Go through each cell
-  for (i in seq_len(ncol(g))) {
-    neighbors <- which(g[, i] > 0)  # neighbor indices
-    if (length(neighbors) == 0) next
+demat.concord<-lapply(1:length(delist), function(x){ 
+  fcat(x)
+  delist[[x]] %>% as.data.frame %>% 
+    #dplyr::filter(abs(log2FoldChange)>=thr, pvalue<=pval) %>%
+    names2col(., "Geneid") %>% dplyr::mutate(treatment=names(delist)[x], effect=ifelse(log2FoldChange>=1, "differentially open", "differentially closed")) %>% arrange(log2FoldChange) %>% dplyr::mutate(concordance=ifelse(abs(log2FoldChange)>=thr&pvalue<=pval, check.concordance(Geneid), "no DA")) %>% dplyr::filter(!!sym(exclude.cat)!=!!exclude)  })  %>% Reduce(rbind, .)
+
+
+plt2=ggplot(demat.concord %>% dplyr::filter(!is.na(concordance)), aes( x=log2FoldChange, fill=concordance))+geom_density(alpha=0.5)+facet_wrap(as.formula(~factor(treatment)), ncol=1, scale="free_y")+theme_minimal()+scale_fill_manual(values=colorlist[["concordance"]])
+plt2
+}
+
+
+
+################################################################################
+#  effect size plot on several peak groups and treatments facetted by peak group
+################################################################################
+effect.size.plot2=function(delist, concordance.peaks, thr=0, pval=0.05, padj=Inf,exclude.cat="concordance", exclude="other", colorlist=allcolors,scale=NULL){
+  
+  check.concordance=function(x){
+ifelse(x %in% concordance.peaks$concordant.open, "concordant.open", 
+  ifelse(x %in% concordance.peaks$discordant, "discordant", 
+    ifelse(x %in% concordance.peaks$concordant.closed, "concordant.closed", "other")))
+}
+  
+  
+demat.concord<-lapply(1:length(delist), function(x){ 
+  fcat(x)
+  delist[[x]] %>% as.data.frame %>% 
+    #dplyr::filter(abs(log2FoldChange)>=thr, pvalue<=pval) %>%
+    names2col(., "Geneid") %>% dplyr::mutate(treatment=names(delist)[x], effect=ifelse(log2FoldChange>=1, "differentially open", "differentially closed")) %>% arrange(log2FoldChange) %>% dplyr::mutate(concordance=ifelse(abs(log2FoldChange)>=thr&pvalue<=pval&padj<=!!padj, check.concordance(Geneid), "no DA")) %>% dplyr::filter(!!sym(exclude.cat)!=!!exclude)  })  %>% Reduce(rbind, .)
+
+
+plt2=ggplot(demat.concord %>% dplyr::filter(!is.na(concordance)), aes( x=log2FoldChange, fill=treatment))+geom_density(alpha=0.5)+geom_vline(xintercept = 0)+facet_wrap(as.formula(~factor(concordance)), ncol=1, scale=scale)+theme_minimal()
+plt2
+}
+
+################################################################################
+#. 
+###############################################################################
+
+oneless= function(x) x[1:(length(x)-1)]
+
+
+################################################################################
+# annotate peak table with geneid
+###############################################################################
+
+
+annotate.peak.table=function(tabb, annotation.peaks, annot.columns=1:4, by="Geneid"){
+  pks=tabb$Geneid
+  
+  left_join(annotation.peaks[pks, , drop=F] %>% select(annot.columns), tabb, by=by)
+  
+}
+
+
+
+
+
+################################################################################
+#
+################################################################################
+
+
+create.color.ramp=function(values, colors) {
+  
+  # create a color ramp function based on the given colors
+  ramp <- colorRamp(colors)
+  
+  # store min/max of the values
+  vmin <- min(values, na.rm = TRUE)
+  vmax <- max(values, na.rm = TRUE)
+  
+  # return a function that converts numbers → interpolated hex colors
+  function(x) {
+    # rescale input to [0,1]
+    t <- (x - vmin) / (vmax - vmin)
+    t[t < 0] <- 0
+    t[t > 1] <- 1
     
-    neighbor_labels <- labels[neighbors]
+    # convert interpolated RGB to hex
+    rgb(ramp(t), maxColorValue = 255)
     
-    # Count frequencies
-    tab <- table(neighbor_labels)
-    max_count <- max(tab)
-    top_labels <- names(tab[tab == max_count])
     
-    # Only reassign if a unique majority exists
-    if (length(top_labels) == 1 && top_labels != labels[i]) {
-      new_labels[i] <- top_labels
-    }
   }
-  
-  # Add new labels to metadata
-  seurat_obj@meta.data[[paste0(group_var, "_smoothed")]] <- new_labels
-  
-  return(seurat_obj)
 }
 
 
-################################################################################
-# mutual information between two genes
-################################################################################
 
 
-mutual_info_genes <- function(seurat_obj, gene_x, gene_y, assay = "RNA", slot = "data") {
-  library(infotheo)
-  # Extract expression matrix
-  fcat("getting assay data")
-  mat <- GetAssayData(seurat_obj, assay = assay, slot = slot)
-  fcat("checking if genes are present")
-  # Check if genes exist
-  if (!(gene_x %in% rownames(mat))) stop(paste("Gene", gene_x, "not found in Seurat object."))
+interpolate.colors <- function(values, colors) {
+  # ensure numeric
+  vals <- as.numeric(values)
   
-  present.genes= gene_y[gene_y %in% rownames(mat)]
-  if (length(present.genes) ==0) stop(paste("Genes", setdiff(gene_y, present.genes), "not found in Seurat object."))
+  # get range
+  rng <- range(vals, na.rm = TRUE)
   
-  # Binarize expression (1 = expressed, 0 = not expressed)
-   fcat("binarising matrix")
-  mat2=mat[c(gene_x,present.genes), ]>0
-  rownames(mat2)=c(gene_x,present.genes)
-  mis=lapply(1:length(present.genes), function(gy){
-    cat(".")
-    if(gy %% 100 ==0){
-     cat("\n") 
-    }
-  # Compute mutual information
-  mi <- mutinformation(mat2[gene_x, ], mat2[present.genes[gy],])
-  }) %>% Reduce(c,. ) %>% givename(., present.genes)
+  # interpolation function
+  palette_fun <- colorRampPalette(colors)
   
-  gc()
-  return(mis)
+  # map each unique value into 0–1 range
+  scaled <- (unique(vals) - rng[1]) / diff(rng)
+  scaled[scaled < 0] <- 0
+  scaled[scaled > 1] <- 1
+
+  # get interpolated colors
+  interpolated <- rgb(colorRamp(colors)(scaled)/255)
+
+  # return a named vector for convenience
+  names(interpolated) <- unique(values)
+  
+  return(interpolated)
 }
 
-#########################################
-pasteall=function(x) paste(x, collapse="_")
 
 
 ################################################################################
-# cellinfo split clusters by condition
+# PCA creation and projection functions
 ################################################################################
 
 
-geomtype <- function(plot) {
-  if (length(plot$layers) == 0) {
-    return("no geoms")
+# PCA pre-processeor
+#
+# Generate all the necessary information to plot PCA from a DESeq2 object
+# in which an assay containing a variance-stabilised matrix of counts is
+# stored. Copied from DESeq2::plotPCA, but with additional ability to
+# say which assay to run the PCA on.
+
+# author Gavin Kelly
+#
+
+projectsamples=function(dds, refids=NULL, testids=NULL, assay="vst", n_top_var=Inf, label=NULL, return.reference=T){
+################################################################################
+# create pca of reference a
+################################################################################  
+metadata=as.data.frame(colData(dds))  
+fcat("generating pca...")  
+pca.list      <- plotPCA_vst(dds, ids=refids, metadata=metadata[refids, ], assay=vst_name, ntop=n_top_var)
+refpca.df<-pca.list[[1]] 
+refpca.obj<-pca.list[[2]]
+fcat("running pca projection...")
+#project samples onto the PCA
+projected.df= scale(assay(dds[, testids], vst_name) %>% t, refpca.obj$center, refpca.obj$scale) %*% refpca.obj$rotation
+
+#combine test and reference dataset
+fcat("binding projection results...")
+projected.df<- cbind(metadata[testids, ], projected.df[testids, ] )
+if(return.reference){
+pca.data<- bind_rows(refpca.df, projected.df)
+}else{
+  pca.data=projected.df
+}
+
+if(!is.null(label)){
+pca.data[testids, "celltype"]=label
+}
+
+pca.data}
+
+
+
+
+simplePCA=function(dds, assay="vst", n_top_var=Inf, label=NULL, return.full=F){
+################################################################################
+# create pca of reference a
+################################################################################  
+metadata=as.data.frame(colData(dds))  
+fcat("generating pca...")  
+pca.list      <- plotPCA_vst(dds, ids=rownames(metadata), metadata=metadata, assay=vst_name, ntop=n_top_var)
+refpca.df<-pca.list[[1]] 
+refpca.obj<-pca.list[[2]]
+
+
+refpca.df[, "pca_id"]=label
+
+
+if(return.full){
+  list(df=refpca.df, pca.obj=refpca.obj)
+}else{
+refpca.df
+}
   }
-  # Extract the class of the geom object from the first layer
-  gclass <- class(plot$layers[[1]]$geom)[1]
-  # ggplot geoms are like "GeomPoint", "GeomBar", etc.
-  # Strip the "Geom" prefix and lowercase
-  gsub("^Geom", "", gclass) |>
-    tolower()
-}
 
 
-################################################################################
-# write cellranger-style outs folder from a seurat object
-################################################################################
 
 
-write.cellranger.outs <- function(seurat_obj, outdir) {
-  # Load needed packages
-  if (!requireNamespace("Matrix", quietly = TRUE)) {
-    stop("Package 'Matrix' is required.")
-  }
-  
-  # Ensure output directory exists
-  if (!dir.exists(outdir)) {
-    dir.create(outdir, recursive = TRUE)
-  }
-  
-  # Extract raw counts (sparse matrix preferred)
-  counts <- Seurat::GetAssayData(seurat_obj, slot = "counts")
-  
-  # Barcodes
-  barcodes <- colnames(counts)
-  barcodes_file <- file.path(outdir, "barcodes.tsv.gz")
-  writeLines(barcodes, gzfile(barcodes_file))
-  
-  # Features (10x format expects: gene_id, gene_name, feature_type)
-  features <- rownames(counts)
-  features_df <- data.frame(
-    gene_id = features,
-    gene_name = features,
-    feature_type = "Gene Expression"
-  )
-  features_file <- file.path(outdir, "features.tsv.gz")
-  write.table(
-    features_df,
-    file = gzfile(features_file),
-    sep = "\t", quote = FALSE,
-    row.names = FALSE, col.names = FALSE
-  )
-  
-  # Matrix (sparse market matrix format)
-  matrix_file_con <- gzfile(file.path(outdir, "matrix.mtx.gz"), "w")
-  Matrix::writeMM(counts, file = matrix_file_con)
-  close(matrix_file_con)
-  message("CellRanger-like files written to: ", outdir)
-  invisible(TRUE)
-}
-
-################################################################################
-# from cluster object  
-################################################################################
-cluster.to.list <- function(clusters) {
-  split(names(clusters), clusters)
-}
-
-  
