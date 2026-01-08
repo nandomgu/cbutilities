@@ -5,7 +5,13 @@ sca=2.5
 ################################################################################
 
 packages <- c("devtools", "dplyr","data.table","tidyr", "ggplot2","simpleCache","DESeq2","Seurat", 
-               "ggfortify", "ggExtra", "gridExtra", "ggforce", "ggrastr", "alluvial", "mltools", "GSVA", "tinytex")
+               "ggfortify", "ggExtra", "gridExtra", "ggforce", "ggrastr", "alluvial", "mltools", "GSVA", "tinytex", "hdf5r", "glmGamPoi", "gtools", "patchwork", "STRINGdb", "pcaMethods", "velocyto-team/velocyto.R",
+              "AUCell", "RcisTarget","GENIE3", 
+              "zoo", "mixtools", "rbokeh"
+              "DT", "NMF", "ComplexHeatmap", "R2HTML", "Rtsne",
+              "doMC", "doRNG", 
+              "aertslab/SCopeLoomR"
+              )
 
 # Function to check, install if necessary, and load packages
 install_and_load <- function(pkg) {
@@ -477,7 +483,7 @@ timestamp= function(nm) paste0(Sys.Date(),"_", nm)
 
 tpng=function(nm,path=config$plotpath,  ...) png(paste0(path, timestamp(nm), ".png"),...)
 
-tpdf=function(nm, path=config$plotpath,pw=2.5, sca=2.5, width=pw*sca, height=pw*sca, ...) pdf(paste0(path, timestamp(nm), ".pdf"), wi=width, he=height, ...)
+tpdf=function(nm, path=config$plotpath,pw=2.5, sca=2.5, width=1, height=1, ...) pdf(paste0(path, timestamp(nm), ".pdf"), wi=width*pw*sca, he=height*pw*sca, ...)
 
 #############################################################
 #                   
@@ -525,7 +531,7 @@ renamelabel=function(column, ..., renameto){
 }
 
 
-triagecells.multi2=function(so, groupvar="seurat_clusters", ...){
+triagecells.multi2=function(so, groupvar="seurat_clusters", clean=F, ...){
   #... are the clusters in the group one after the other, ordered arbitrarily and grouped using c() when they are meant to be merged
   # warning: if some cluster groups overlap in any extent, cell indices will appear in two or more occasions and will be sequentially replaced!
   
@@ -541,12 +547,13 @@ triagecells.multi2=function(so, groupvar="seurat_clusters", ...){
       vector[indlist[[ind]]]=ind
       return(vector.stamp( vector, ind+1))
     }else{
-      vector[is.na(vector)]= paste_("original", original[is.na(vector)])
+      vector[is.na(vector)]= paste_("og", original[is.na(vector)])
       return(vector) 
     }
   }
   
   out=vector.stamp(final.arr, 1)
+  out
 }
 
 
@@ -711,23 +718,190 @@ seuratprocessing_umap=function(o){
 getpname=function(x) unique(x@meta.data[, "orig.ident"])
 
 
-seuratprocessing.sct=function(so,rcache=NULL, verbose=T, umapdims=1:10, vfeatures=2000, label=""){
+see.clusterings=function(so){
+  grep("seurat_clusters", colnames(so@meta.data), value=T)
+}
+
+set.clustering=function(so, num=NULL){
+all.clusterings=see.clustrerings(so)
+if(!is.null(num)){
+so@meta.data$seurat_clusters_previous=so@meta.data$seurat_clusters
+so@meta.data= so@meta.data %>% dplyr::mutate(seurat_clusters= !!sym(all.clusterings[num]), current_clustering=all.clusterings[num])
+so
+}else{
+fcat("no clustering performed.")  
+}
+}
+
+
+reset.clustering=function(so,  original=F){
+all.clusterings=see.clustrerings(so)
+
+if("seurat_clusters_previous" %in% all.clusterings){
+so@meta.data$seurat_clusters=so@meta.data$seurat_clusters_previous
+so@meta.data$current_clustering=NULL
+}else{
+  fcat("no previous clustering explicitly registered")
+  if("seurat_clusters_original" %in% all.clusterings && original==T){
+    fcat("resetting to original clustering...")
+so@meta.data$seurat_clusters=so@meta.data$seurat_clusters_original
+}else{
+  fcat("No resetting was performed. You can try setting original=T")
+  fcat("possible changes:")
+  fcat(paste(all.clusterings, collapse=","))
+}}
+  so
+
+}
+
+
+seuratprocessing.sct=function(so,rcache=NULL, verbose=T, umapdims=1:10, vfeatures=2000, label="", reduction.label="", reduction.for.neighbors=NULL, resolution.clusters=0.8, reprocess=F, harmony.vars=NULL, vars.to.regress.sct=NULL){
   
-    fcat(paste0("finding markers using the DElegate package...\n") ) 
+    
  if(!is.null(rcache)){
   simpleCache(rcache, assignToVar="so", reload=T) 
  }
   
   so@meta.data$umapdims=paste(umapdims, collapse=";")
- simpleCache(paste0("processed_dataset_id",label, "_", digest::digest(so), "_vfeatures_", vfeatures) %>% addversion, {
-   so=SCTransform(so, verbose=verbose, variable.features.n=vfeatures)
-  so=RunPCA(so, verbose=verbose)
-  so=RunUMAP(so, reduction="pca", dims=umapdims, return.model=T, verbose=verbose)
-  so=FindNeighbors(so, verbose=verbose)
-  so=FindClusters(so, verbose=verbose)
+ 
+   
+  sctname=paste0("SCT", label)
+  pcaname=paste0("pca", label)
+  umapname=paste0("umap", label, reduction.label)
+  clustername=paste0("seurat_clusters_", label, reduction.label)
+  harmony.reduction=paste_("harmony", pcaname)
+  harmony.umap=paste_(umapname, "harmony") 
+ graphname=ifelse(label!="", paste0("SCT_", label), "SCT")
+  
+  Project(so)=label  
+  simpleCache(paste0("processed_dataset_id",label, "_", Project(so), "_",digest::digest(so), "_vfeatures_", vfeatures) %>% addversion, {
+  #if reprocessing is requested or if the assay doesn't exist
+  if(reprocess || !any(grepl(sctname, names(so@assays)))){
+  fcat("running SCTransform...")
+  so=SCTransform(so, verbose=verbose, variable.features.n=vfeatures, new.assay.name=sctname, vars.to.regress=vars.to.regress.sct)
+  fcat("Calculating PCA...")
+  so=RunPCA(so, assay=sctname, verbose=verbose, reduction.name=pcaname )
+   fcat("Calculating UMAP...")
+  so=RunUMAP(so, reduction=pcaname, dims=umapdims, return.model=T, verbose=verbose, reduction.name=umapname )
+  
+      if(!is.null(harmony.vars)){
+    so=RunHarmony(so, verbose=verbose, group.by.vars=harmony.vars, reduction=pcaname, reduction.save=harmony.reduction, assay.use=sctname)
+    so=RunUMAP(so, reduction=harmony.reduction, dims=umapdims, return.model=T, verbose=verbose, reduction.name=harmony.umap)
+    fcat("model is only being returned for the Harmony umap. for a model on a different reduction please use seuratprocessing.sct")
+    if(is.null(reduction.for.neighbors)){
+      fcat("defaulting neighbors reduction to harmony PCA with id", harmony.reduction)
+      reduction.for.neighbors=harmony.reduction
+    }
+    
+  graphname=paste_(graphname, "harmony")
+  }else{
+      
+          if(is.null(reduction.for.neighbors)){
+      fcat("defaulting neighbors reduction to PCA")
+      reduction.for.neighbors="pca"
+    }
+  }
+  
+  }else{
+    
+       if(any(grepl(sctname, names(so@assays)))){
+    
+     fcat("reprocessing aborted: assay", sctname, "already present while reprocess=FALSE. Using existing assays for nn and clustering")
+     
+     
+   }
+    
+       if(any(grepl(paste(pcaname, umapname, sep="|"), names(so@reductions)))){
+    
+     fcat("reprocessing aborted: reductions with label",grepl(sctname, names(so@reductions))  ,"already present while reprocess=FALSE. Using existing assays for nn and clustering")
+     
+       }
+    
+  }
+  
+    ## finish constructing the graph name(s)
+    graphname=paste0(paste_(graphname,reduction.for.neighbors), c("nn","snn"))  
+  #calculate how many dimensions should be used for neeighbors depending on whether the reduction is umap or not
+  if(grepl("umap", reduction.for.neighbors)){neighdims=c(1,2)}else{neighdims=umapdims}
+  
+  so=FindNeighbors(so, verbose=verbose,  dims=neighdims, reduction=reduction.for.neighbors, graph.name=graphname)
+  
+  if("seurat_clusters" %in% colnames(so@meta.data)){
+   
+   if("current_clustering" %in% colnames(so@meta.data)){
+   so@meta.data=so@meta.data %>% dplyr::mutate(previous_clustering=current_clustering) #this is a string
+   so@meta.data=so@meta.data %>% dplyr::mutate(seurat_clusters_previous=seurat_clusters) 
+   
+   }else{
+     so@meta.data=so@meta.data %>% dplyr::mutate(seurat_clusters_original=seurat_clusters) 
+     so@meta.data=so@meta.data %>% dplyr::mutate(previous_clustering="seurat_clusters_original")
+   }
+  }
+  
+  so=FindClusters(so, verbose=verbose, resolution=resolution.clusters, graph.name = graphname[2])
+  so@meta.data=so@meta.data %>% dplyr::mutate(!!sym(paste0("seurat_clusters_on_", reduction.for.neighbors)):=seurat_clusters, current_clustering=paste0("seurat_clusters_on_", reduction.for.neighbors))
+  
+  so
 }, assignToVar="so", reload=T)
  so 
 }
+
+
+seuratprocessing.sct.harmony=function(so,rcache=NULL, verbose=T, umapdims=1:10, vfeatures=2000, label="", reduction.for.neighbors=NULL, group.by.vars=NULL, resolution.clusters=0.8){
+  
+    
+ if(!is.null(rcache)){
+  simpleCache(rcache, assignToVar="so", reload=T) 
+ }
+  
+  so@meta.data$umapdims=paste(umapdims, collapse=";")
+ simpleCache(paste0("processed_dataset_id",label, "_", Project(so), "_",digest::digest(so), "_vfeatures_", vfeatures) %>% addversion, {
+   
+  sctname=paste0("SCT", label)
+  pcaname=paste0("pca", label)
+  umapname=paste0("umap", label)
+  graphname=paste0(ifelse(label!="", paste0("SCT_", label), "SCT"), c("_nn","_snn"))
+  clustername=paste0("seurat_clusters_", label)
+  
+   so=SCTransform(so, verbose=verbose, variable.features.n=vfeatures, new.assay.name=sctname)
+
+  so=RunPCA(so, assay=sctname, verbose=verbose, reduction.name=pcaname )
+  
+  if(!is.null(group.by.vars)){
+    so=RunHarmony(so, verbose=verbose, group.by.vars=group.by.vars, reduction=pcaname, reduction.save=paste_("harmony", pcaname), assay.use=sctname )
+    so=RunUMAP(so, reduction=paste_("harmony", pcaname), dims=umapdims, return.model=T, verbose=verbose, reduction.name=paste_(umapname, "harmony") )
+    fcat("model is only being returned for the Harmony umap. for a model on a different reduction please use seuratprocessing.sct")
+    if(is.null(reduction.for.neighbors)){
+      fcat("defaulting neighbors reduction to harmony PCA with id", paste_("harmony", pcaname))
+      reduction.for.neighbors=paste_("harmony", pcaname)
+    }
+    
+  graphname=paste_(graphname, "harmony")
+  }
+  
+  so=RunUMAP(so, reduction=pcaname, dims=umapdims, return.model=F, verbose=verbose, reduction.name=umapname )
+  
+  #calculate how many dimensions should be used for neeighbors depending on whether the reduction is umap or not
+  if(grepl("umap", reduction.for.neighbors)){neighdims=c(1,2)}else{neighdims=umapdims}
+  
+  so=FindNeighbors(so, verbose=verbose,  dims=neighdims, reduction=reduction.for.neighbors, graph.name=graphname)
+  
+  if(any(grepl("seurat_clusters", colnames(so@meta.data)))){
+    
+    num=grepl("seurat_clusters", colnames(so@meta.data)) %>% sum
+    
+   so@meta.data=so@meta.data %>% dplyr::mutate(!!sym(paste_("seurat_clusters_original", num+1)):=seurat_clusters) 
+  }
+  
+  so=FindClusters(so, verbose=verbose, resolution=resolution.clusters, graph.name = graphname[2])
+  so
+}, assignToVar="so", reload=T)
+ so 
+}
+
+
+
+
 
 seuratprocessing_markers1=function(so, verbose=F, umapdims=30, mincpm=3, minfc=1, fdr=0.05, selecttop=5, vfeatures=2000){
   so=SCTransform(so, verbose=verbose, variable.features.n=vfeatures)
@@ -826,11 +1000,18 @@ seuratprocessing.markers2=function(so, verbose=T, method="deseq", group_column="
 
 
 
-seuratmarkers.delegate=function(so, rcache=NULL, method="deseq", group_column="seurat_clusters", replicate_column=NULL, padj=0.05, minfc=0.5,selecttop=NULL,minrate=0.5, getresidual=F, min.cells.per.group=10, label=""){
-  fcat(paste0("finding markers using the DElegate package...\n") slot=group_column) 
+
+
+
+seuratmarkers.delegate=function(so, rcache=NULL, method="deseq", group_column="seurat_clusters", slot=group_column, replicate_column=NULL, padj=0.05, minfc=0.5,selecttop=NULL,minrate=0.5, getresidual=T, min.cells.per.group=10, label="", verbosity=1){
+  fcat(paste0("finding markers using the DElegate package...\n")) 
  if(!is.null(rcache)){
   simpleCache(rcache, assignToVar="so", reload=T) 
  }
+  
+ misc.object=so$RNA@misc 
+ so$RNA@misc=list()
+ 
   so.digest=digest::digest(so)
   
   fulldigest=digest::digest(package.vars(so.digest, method, replicate_column, group_column,padj, minfc,selecttop, minrate,getresidual, min.cells.per.group))
@@ -852,49 +1033,96 @@ seuratmarkers.delegate=function(so, rcache=NULL, method="deseq", group_column="s
   }
   
   
-  m<<- DElegate::FindAllMarkers2(object=so, group_column=group_column, replicate_column=replicate_column, method=method, min_rate=minrate, min_fc=0.1)
+  m<<- DElegate::FindAllMarkers2(object=so, group_column=group_column, replicate_column=replicate_column, method=method, min_rate=minrate, min_fc=0.1, verbosity=verbosity)
   m
   #m=cb_pos_markers(scwt@assays$RNA@counts, grouping=sma %>% metadata %>% pull() )
   }, assignToVar="m", reload=T)
   m<<-m
   #print(m)
   
-  if(group_column %in% (allcolors %>% names)){
-    clusters=allcolors[[group_column]][allcolors[[group_column]] %>% names %in% (so %>% metadata %>% pull(group_column) %>% unique)] %>% names
-  }else{
-    clusters=so %>% metadata %>% pull(group_column) %>% unique %>% as.vector
-    
-  }
-  
-  ## arrange and filter best markers.
+  ## arrange and filter top markers.
   ## currently filtering such that the minimum rate for in group cells is at least minrate. 
   pa=padj
   mi=minfc
-  if(is.null(selecttop)){
-    lt=lapply(clusters, function(x){
-      fcat("cluster", x)
-      m %>% dplyr::filter(group1==!!x,padj<=pa, log_fc>=mi, rate1>=minrate) %>% arrange(-log_fc)
-     
-      }
-      )
-    topstr=""  
-  }else{
-    
-    lt=lapply(clusters, function(x){
-      fcat("cluster", x)
-      m %>% dplyr::filter(group1==!!x,padj<=pa, log_fc>=mi, rate1>=minrate) %>% arrange(-log_fc) %>% head(n=selecttop)
-  })
-  }
-  mp=lt %>% Reduce(rbind,.)
+  
+  mp=m %>% group_split(group1) %>% lapply(., function(x) x %>% filter(log_fc>=minfc, padj<=0.05, rate1>=minrate) %>% arrange(-log_fc)) %>% Reduce(rbind,. )
+  mb=m %>% group_split(group1) %>% lapply(., function(x) x %>% filter(log_fc<=-minfc, padj<=0.05) %>% arrange(log_fc)) %>% Reduce(rbind,. )
+
+  
+  
   
   cat("Number of filtered markers: ", nrow(mp), "(", (nrow(mp)/nrow(m))*100, "% markers post filtering)\n")
+  so[["RNA"]]@misc=misc.object
   so[["RNA"]]@misc[[slot]]$markers <- m
   so[["RNA"]]@misc[[slot]]$top_markers <- mp
+  so[["RNA"]]@misc[[slot]]$negative_markers <- mb
   if(getresidual){
-    so <- GetResidual(so, features = so$RNA@misc$top_markers$feature, verbose = F)
+    so <- GetResidual(so, features = so[["RNA"]]@misc[[slot]]$markers, verbose = F)
   }
   so
 }
+
+
+seuratmarkers.roc=function(so, rcache=NULL, group_column="seurat_clusters", slot=group_column, replicate_column=NULL, padj=0.05, minfc=0.5,selecttop=NULL,minrate=0.5, getresidual=F, min.cells.per.group=10, label="", column.names.delegate=T){
+  
+  method="roc"
+  fcat(paste0("finding markers using the Seurat package (roc method)...\n")) 
+ if(!is.null(rcache)){
+  simpleCache(rcache, assignToVar="so", reload=T) 
+ }
+ 
+ misc.object=so$RNA@misc 
+ so$RNA@misc=list()
+  so.digest=digest::digest(so)
+  
+  fulldigest=digest::digest(package.vars(so.digest, method, replicate_column, group_column,padj, minfc,selecttop, minrate,getresidual, min.cells.per.group))
+  
+  simpleCache(paste0("markers_seuratroc_so_id_", label, "_",fulldigest, "_groupby_", group_column, "_method_", method) %>% addversion, {
+  
+  #function (object, meta_data = NULL, group_column = NULL, replicate_column = NULL, 
+  #method = "edger", min_rate = 0.05, min_fc = 1, lfc_shrinkage = NULL, 
+  #verbosity = 1)   
+  if(min.cells.per.group){
+    
+    countstab=so %>% metadata %>% group_by(!!sym(group_column)) %>% summarise(counts=n()) %>% as.data.frame
+    
+    goodcats=countstab[ countstab$counts>=min.cells.per.group, group_column]
+    fcat("enough cells found for", paste(goodcats, collapse=","))
+    
+    so = so[, (metadata(so) %>% filter(!!sym(group_column) %in% goodcats) %>% rownames)]
+    
+  }
+  
+  Idents(so)=group_column
+  m<<- Seurat::FindAllMarkers(object=so, test.use="roc")
+  m 
+
+  #>                 p_val avg_log2FC pct.1 pct.2    p_val_adj cluster     gene
+  }, assignToVar="m", reload=T)
+  m<<-m
+
+
+ ###adding variables from the delegate tables
+   m= m %>% dplyr::mutate( log_fc=avg_log2FC, rate1=pct.1, rate2=pct.2, group1=cluster,  feature=gene) 
+    
+
+  m=m %>% dplyr::mutate(pct.ratio=rate1/rate2) %>% arrange(group1, -pct.ratio)
+  mp=m %>% group_split(group1) %>% lapply(., function(x) x %>% filter(log_fc>=minfc, padj<=0.05) %>% arrange(-pct.ratio)) %>% Reduce(rbind,. ) %>% as.data.frame
+  mb=m %>% group_split(group1) %>% lapply(., function(x) x %>% filter(log_fc<=-minfc, padj<=0.05) %>% arrange(pct.ratio)) %>% Reduce(rbind,. ) %>% as.data.frame
+
+  
+  
+  cat("Number of filtered markers: ", nrow(mp), "(", (nrow(mp)/nrow(m))*100, "% markers post filtering)\n")
+  so[["RNA"]]@misc=misc.object
+  so[["RNA"]]@misc[[slot]]$markers_roc <- m
+  so[["RNA"]]@misc[[slot]]$top_markers_roc <- mp
+  so[["RNA"]]@misc[[slot]]$negative_markers_roc <- mb
+  if(getresidual){
+    so <- GetResidual(so, features = so$RNA@misc[[slot]]$top_markers$feature, verbose = F)
+  }
+  so
+}
+
 
 
 
@@ -1058,8 +1286,11 @@ simple_roc <- function(labels, scores){
 
 ############Quality Ccontrol QC plots function
 
-add.mito= function(so){  
-percent.mt<- PercentageFeatureSet(so, pattern = "^MT-") %>% givecolnames(., nms="percent.mt")
+add.mito= function(so){ 
+  # for old seurat
+percent.mt<- PercentageFeatureSet(so, pattern = "^MT-") %>%givecolnames(., nms="percent.mt")  
+# for new seurat  
+#percent.mt<- PercentageFeatureSet(so, pattern = "^MT-") %>% coerce.vector.to.matrix %>% givecolnames(., nms="percent.mt")
 so<- AddMetaData(so, metadata=percent.mt)
 so
 }  
@@ -1090,7 +1321,8 @@ qcplots=function(so,
                  seriate.pars=list(ncells=500,nmarkers=NULL),
                  plot.empty=NULL, 
                  groupvar="group1",
-                 lfcvar="log_fc"){
+                 lfcvar="log_fc", 
+                 nmarkers.heatmap=20){
 
 so<- add.mito(so)
 
@@ -1106,9 +1338,11 @@ Idents(so)=colorby
    cells=NULL
      }else{
 if(is.null(seriate.method)){            
-cells <- WhichCells(so, downsample = 100)
+cells <- cellinfo.init(so, seriate=F)
 }else{
 cells<<-seriatecells(so, clusvar=colorby, meth=seriate.method, groupvarname=groupvar, lfcvarname = lfcvar, ncells=seriate.pars$ncells, nmarkers=seriate.pars$nmarkers)
+
+
 }
      }   
   
@@ -1242,7 +1476,7 @@ fcat("Preparing heatmap...")
              
  cat("checkpoint5...\n")                       
 
-ph <- DoHeatmap(so, features = so$RNA@misc$top_markers$feature, group.colors=allcolors[[colorby]], slot = "scale.data", cells = cells$cells) + NoLegend()
+ph <- DoHeatmap(so, features = adjust.markers(cells, nmarkers.heatmap)$markers, group.colors=allcolors[[colorby]], slot = "scale.data", cells = cells$cells) + NoLegend()
 
 
     
@@ -1456,7 +1690,24 @@ showpalette=function(p, pname="generic"){
 #GGUMAP wrapper  and derivatives
 ##################################################################################
 
-ggumap=function(so, umap.df=NULL, colorby="seurat_clusters", labelby="seurat_clusters", sz=0.02, ssca=300, colorlist=allcolors, reductions=c("umap"), reduction.key="UMAP_", legend.size=3, color.labels.by="defaultcolor"){
+adjust.seurat.colors=function(so){
+ if("seurat_clusters" %in% colnames(so@meta.data)){
+   num=length(so@meta.data$seurat_clusters %>%  unique)
+   #spectral
+   #return(colorRampPalette(RColorBrewer::brewer.pal(20, "Spectral"), space="rgb")(num) %>% givename(., 0:(length(num)-1)))
+   #rainbow
+   return(rainbow(num) %>% givename(., 0:(num-1)))
+ }else{
+   
+   return(colorRampPalette(RColorBrewer::brewer.pal(20, "Spectral"), space="rgb")(25))
+ }
+  
+}
+
+
+
+
+ggumap=function(so, umap.df=NULL, colorby="seurat_clusters", labelby="seurat_clusters", sz=0.02, ssca=300, colorlist=NULL, reductions=c("umap"), reduction.key="UMAP_", legend.size=3, color.labels.by="defaultcolor"){
   require(ggrepel)
   require(ggrastr)
   dim1=paste0(reduction.key, 1)
@@ -1478,7 +1729,7 @@ ggumap=function(so, umap.df=NULL, colorby="seurat_clusters", labelby="seurat_clu
   
   # colorlist doesn't exist.
   if (is.null(colorlist[[colorby]])){
-    colorlist[[colorby]]= randomcolors(length(cats)) %>% givename(., cats)
+    colorlist[[colorby]]= rainbow(length(cats)) %>% givename(., cats)
     fcat("colors used:")
     
     colorlist[[colorby]] %>% dput
@@ -1500,19 +1751,48 @@ ggumap=function(so, umap.df=NULL, colorby="seurat_clusters", labelby="seurat_clu
   colorlist[["defaultcolor"]]=c(one="black")
   colorlist[[color.labels.by]]=c(colorlist[[color.labels.by]] )
   colorlist[[colorby]]=c(colorlist[[colorby]] )
+  if(colorby=="seurat_clusters"){
+  colorlist[["seurat_clusters"]]=adjust.seurat.colors(so)
+  }
   ##############################################################################
   # constructing plot
   ##############################################################################
   
+ 
+  
   dat2=dat %>% group_by(!!sym(labelby)) %>% summarise(UMAP_1=jitter(mean(UMAP_1)), UMAP_2=jitter(mean(UMAP_2)), defaultcolor="one")
-  gpuc=ggplot(dat, aes(x=UMAP_1, y=UMAP_2, label=!!sym(labelby)))+
+  #catch some pesky history dependent bug with geom_point_rast
+  
+  gpuc<- tryCatch(
+  {
+    # First try with geom_point_rast
+   print(ggplot(dat, aes(x=UMAP_1, y=UMAP_2, label=!!sym(labelby)))+
     geom_point_rast(size=sz, aes(color=!!sym(colorby)))+
     scale_color_manual(values=colorlist[[colorby]], guide = guide_legend(override.aes = list(size = legend.size, shape=15) ))+
     theme_classic()+
-    #NoLegend()+
-    #geom_text_repel(data=dat %>% group_by(!!sym(labelby)) %>% summarise(UMAP_1=mean(UMAP_1), UMAP_2=mean(UMAP_2)), size=sz*ssca)
-    #geom_text(data= dat2,  aes(color=!!sym(color.labels.by)), size=sz*ssca)
+    geom_text(data= dat2,  color="black", size=sz*ssca))
+    
+    ggplot(dat, aes(x=UMAP_1, y=UMAP_2, label=!!sym(labelby)))+
+    geom_point_rast(size=sz, aes(color=!!sym(colorby)))+
+    scale_color_manual(values=colorlist[[colorby]], guide = guide_legend(override.aes = list(size = legend.size, shape=15) ))+
+    theme_classic()+
     geom_text(data= dat2,  color="black", size=sz*ssca)
+  },
+  error = function(e) {
+    if (grepl("Empty raster", e$message)) {
+      message("geom_point_rast failed (Empty raster). Falling back to geom_point().")
+        ggplot(dat, aes(x=UMAP_1, y=UMAP_2, label=!!sym(labelby)))+
+    geom_point(size=sz, aes(color=!!sym(colorby)))+
+    scale_color_manual(values=colorlist[[colorby]], guide = guide_legend(override.aes = list(size = legend.size, shape=15) ))+
+    theme_classic()+
+    geom_text(data= dat2,  color="black", size=sz*ssca)
+    } else {
+      stop(e) # rethrow unexpected errors
+    }
+  }
+)
+
+    
   gpuc}
 
 
@@ -3454,14 +3734,48 @@ cellinfo.getmarkers=function(so, clusvar="seurat_clusters", selecttop=NULL){
   
   if(is.null(so$RNA@misc$top_markers)){  
     so=seuratmarkers.delegate(so, minfc=1, group_column=clusvar, replicate_column=replicatevar, fullrecreate=fullrecreate, fullreload=fullreload, ...)
+  }else{
+    
+    
   }
   
 }
 
 
 
+################################################################################
+# deduplicate marker list forcing the marker to be assigned to the highest expressing cluster
+################################################################################
 
+      deduplicate.markers=function(markers, gene.field="feature", logfc.field="log_fc", group.field="group1"){
+      deduplicated_markers <- markers %>%
+     group_by(!!sym(gene.field)) %>%
+     slice_max(order_by = !!sym(logfc.field), n = 1, with_ties = FALSE) %>%
+      ungroup() %>% as.data.frame %>% arrange(!!sym(group.field), -!!sym(logfc.field))
+      deduplicated_markers
+      }
 
+harmonise.marker.table=function(m){
+if("cluster" %in% grep("group1|cluster", colnames(m), value=T)){
+ m = m %>% dplyr::mutate(group1=cluster, feature=gene, log_fc=avg_log2FC, rate1=pct.1, rate2=pct.2) 
+}  
+m  
+}
+harmonise.all.markers=function(so){
+  
+for(j in names(so$RNA@misc)){
+ 
+  if(j %in% c("markers", "top_markers")){
+    so$RNA@misc[[j]]=harmonise.marker.table(so$RNA@misc[[j]])
+  }else{
+    so$RNA@misc[[j]]$markers=harmonise.marker.table(so$RNA@misc[[j]]$markers)
+    so$RNA@misc[[j]]$top_markers=harmonise.marker.table(so$RNA@misc[[j]]$top_markers)
+    }
+
+}
+so}  
+  
+}
 
 
 get.cellinfo.markerlist=function(so, clusvar="seurat_clusters", clusters=NULL, markers=NULL, ass="SCT", groupvarname="group1",lfcvarname="log_fc", extended.output=T, deduped=T, nmarkers=NULL){
@@ -3498,44 +3812,61 @@ get.cellinfo.markerlist=function(so, clusvar="seurat_clusters", clusters=NULL, m
     
     
     if(deduped==T){
-      fullgns= lapply(markerlist0, function(x) x %>% pull(feature)) %>% Reduce(c, .)
-      
+
       ###when duplicates, keep the gene as marker in the cluster where it shows highest log_fold change
       fcat("Assigning genes in more than one cluster to the highest expressing cluster...")    
-      deduped=lapply(unique(fullgns), function(x){
-        lapply(markerlist0, function(y) y %>% filter(feature==x)) %>% Reduce(condrbind, .) %>% arrange(-!!sym(lfcvarname)) %>% head(n=1)  %>% select(feature,!!sym(lfcvarname), !!sym(groupvarname)) 
-        
-      }) %>% Reduce(rbind, .)
+      #NEW CODE!!! hopefully more efficient
       
-      deduped2= deduped %>% dplyr::mutate(ncluster=sapply(deduped[[groupvarname]], function(x) generalreplace(x, clusids,1:length(clusids)), USE.NAMES=F )) %>% arrange(ncluster)
-      
-      #arrange genes from highest log fold change to lowest per cluster
-      markers.revised= deduped2 %>% group_by(ncluster) %>% arrange(-!!sym(lfcvarname), .by_group=T) %>% ungroup()
-      
-      
+       markers.revised=deduplicate.markers(markerlist0 %>% Reduce(rbind, .), logfc.field=lfcvarname, group.field = groupvarname)
     }else{
       markers.revised=markers # forwarding the original table
     }
     
+    ############################################################################
+    # assemble final markerlist
+    ############################################################################
     
-    markergaps= markers.revised %>% pull(ncluster) %>% as.integer %>% diff %>% as.logical %>% which
-    markervector=markers.revised %>% pull(feature) 
-    
-    if(is.null(nmarkers)){    
+        if(is.null(nmarkers)){    
       markerlist=lapply(as.character(clusids), function(x) markers.revised %>% filter(!!sym(groupvarname)==x) %>% pull(feature))
     }else{
       markerlist=lapply(as.character(clusids), function(x) markers.revised %>% filter(!!sym(groupvarname)==x) %>% pull(feature) %>% head(nmarkers))
-      
     }
-    names(markerlist)=as.character(clusids)  
-    markergaps=lapply(1:length(markerlist), function(x) rep(x, length(markerlist[[x]]))) %>% Reduce(c, .) %>% diff %>% as.logical %>% which
     
-  }
+    names(markerlist)=as.character(clusids)  
+    
+    
+    names(markerlist)=as.character(clusids)  
+}
 markerlist  
+
 }
 
+cellinfo.get.markerlist=get.cellinfo.markerlist
 
 
+
+cellinfo.init= function(so, seriate=T, ncells=100,clusvar="seurat_clusters",markerset=clusvar, ...){
+ cellinfo=list()
+ so=setmarkers(so, markerset=markerset)
+   cellinfo$cell.list=cellinfo.getcells(so, clusvar=clusvar, ncells=ncells)
+   cellinfo$markerlist=cellinfo.get.markerlist(harmonise.all.markers(so), clusvar=clusvar)
+   #if(is.numeric.like(names(cellinfo$markerlist))){
+  # names(cellinfo$markerlist)=paste_("cluster", names(cellinfo$markerlist))
+    # }
+   #if(is.numeric.like(names(cellinfo$cell.list))){
+    # names(cellinfo$cell.list)=paste_("cluster", names(cellinfo$cell.list))
+   #}
+   fcat("pt1")
+   cellinfo<-refresh.cellinfo.hard(cellinfo, cell.group.label=clusvar, marker.group.label=markerset)
+   fcat("cell group variable is", cellinfo$cell.group.variable)
+   if(seriate){
+     fcat("pt2")
+cellinfo=cellinfo.seriatecells.seurat(cellinfo, so, new.cells=F)  
+  
+   }
+   
+cellinfo   
+}
 
 
 seriatecells=function(so, clusvar="seurat_clusters", clusters=NULL, meth="seurat", markers=NULL, ncells=500, ass="SCT", groupvarname="group1",lfcvarname="log_fc", extended.output=T, deduped=T, nmarkers=NULL){
@@ -4559,7 +4890,23 @@ glitch.invariants=function(matt, val=0.00001){
 ################################################################################
 #create a heatmap based directly from a cellinfo object
 ################################################################################
+prepare.cellgroup.labels=function(cellinfo){
+ 
+  label.list=lapply(names(cellinfo$cell.list), function(name) {
+    vec_length <- length(cellinfo$cell.list[[name]])
+    middle <- ceiling(vec_length / 2)
+    out <- rep(NA_character_, vec_length)
+    out[middle] <- name
+    out
+  })
+  
+  label.list %>% Reduce(c, .)
+  
+  }
+   
+  
 
+  
 
 cellinfo.heatmap= function(so,
                            cellinfo,
@@ -4601,7 +4948,8 @@ cellinfo.heatmap= function(so,
   
   
   fcat("getting data matrix...")
-  mat=so[cellinfo$markers, cellinfo$cells ]@assays[[assay]]@data %>% as.matrix
+  # upgraded for seurat >v4
+mat<- GetAssayData(so, assay = assay, slot = "data")[cellinfo$markers, cellinfo$cells] %>% as.matrix
   fcat("finding invariant and absent genes...")
   absent.genes= setdiff(cellinfo$markers, rownames(mat))
   variant.rows=get.variant.rows(mat)
@@ -4663,14 +5011,24 @@ cellinfo.heatmap= function(so,
   
   fcat("getting data matrix...")
   
-  mat2=so[cellinfo2$markers, cellinfo2$cells ]@assays[[assay]]@data %>% as.matrix
+  mat2<<-GetAssayData(so, assay = assay, slot = "data")[cellinfo2$markers, cellinfo2$cells] %>% as.matrix
+
   
   cats=cellinfo2$cell.metadata
   
   for(ct in cats){
     
     if(!is.null(allcolors[[ct]])){  
-      cellinfo2$cell.annotation[[ct]]= factor(cellinfo2$cell.annotation[[ct]], levels=allcolors[[ct]] %>% names) 
+      cellinfo2$cell.annotation[[ct]]= factor(cellinfo2$cell.annotation[[ct]], levels=colorlist[[ct]] %>% names) 
+    }
+  }
+  
+    cats2=cellinfo2$marker.metadata
+  
+  for(ct in cats2){
+    
+    if(!is.null(allcolors[[ct]])){  
+      cellinfo2$marker.annotation[[ct]]= factor(cellinfo2$marker.annotation[[ct]], levels=colorlist[[ct]] %>% names) 
     }
   }
   
@@ -4691,7 +5049,8 @@ cellinfo.heatmap= function(so,
                                border_color=NA,
                                right_annotation=ha, 
                                fontsize=5,
-                               main=name 
+                               main=name,
+                               labels_col=F#prepare.cellgroup.labels(cellinfo2)
                                #show_heatmap_legend=show.legend
                                #column_gap = unit(.2, "mm")
   )
@@ -4771,7 +5130,8 @@ refresh.cellinfo.hard=function(cellinfo, cell.group.label="cell.group", marker.g
   
   cellinfo$cell.metadata= colnames(cellinfo$cell.annotation)
   cellinfo$marker.metadata= colnames(cellinfo$marker.annotation)
-  
+  cellinfo$cell.group.variable=ifelse(cell.group.label=="cell.group", NULL, cell.group.label)
+  cellinfo$marker.group.variable=ifelse(cell.group.label=="marker.group", NULL, marker.group.label)
   cellinfo
   
 }
@@ -8361,6 +8721,12 @@ dump.table=function(x, ...){
 
 }
 
+dump.table2=function(x, ...){
+  variable_name <- deparse(substitute(x))
+  fwrite(x, file=paste0("~/mnt_out/metadata/", variable_name, ".csv"), ...)
+
+}
+
 ###############################################################################
 # seriate columns of a matrix
 ##############################################################################
@@ -10158,13 +10524,16 @@ cellinfo.filter.cells=function(cellinfo, varr, vals, so=NULL){
 
   if(!(varr %in% colnames(cellinfo$cell.annotation))){
     
-  fcat("seurat object detected. importing annotations")
+  
   if (!is.null(so)){
-    cellinfo= cellinfo %>% add.cell.annotation(so, ., vars = c("orig.ident", "hto_demux"))
+    fcat("seurat object detected. importing annotations")
+    cellinfo= cellinfo %>% add.cell.annotation(so, ., vars = varr)
   }else{
-   fcat(varr, "not detected in cellinfo and no seurat object provided. please provide seurat object") 
-    return(NULL)
-  }}else{
+   fcat(varr, "not detected in cellinfo and no seurat object provided. please provide seurat object. returning unfiltered") 
+    return(cellinfo)
+  }}
+    
+  
    
     filtered.cells= cellinfo$cell.annotation %>% dplyr::filter(!!sym(varr) %in% vals ) %>% rownames
     
@@ -10238,6 +10607,8 @@ cellinfo$cells=rearranged.cells
 refresh.cellinfo(cellinfo)
 }
 
+
+cellinfo.segregate.cells=segregate.cells
 ################################################################################
 # seriate cells with seurat
 ################################################################################
@@ -10254,22 +10625,27 @@ cellinfo.seriatecells.seurat=function(cellinfo, so , new.cells=T, ncells=100, re
           }
             celltotals=list()
             
-          
-            newnames=names(markerlist) %>% make.names
+
             fcat("Using Seurat Module Score method to rank cells...")
-            so <- AddModuleScore(so, markerlist, name=newnames )
+            so <- AddModuleScore3(so, markerlist )
             
             
             ordcellist=lapply(1:length(markerlist), function(x) {
                fcat("rearranging cells of", names(markerlist)[x])
-              modulename= paste0(newnames[x], x)
-              
+              modulename= get.module.name(names(markerlist)[x])
+              fcat("modulescore name", modulename)
               #sumcells=apply(so[markerlist[[x]],so %>% metadata %>% pull(), 2, sum)
-              
-              all.ordered.cells=so@meta.data %>% filter(!!sym(cellinfo$clustering.variable)==names(markerlist)[x]) %>% select(!!sym(modulename)) %>% arrange(!!sym(modulename)) %>% rownames
-              
-              if(!new.cells){
+              fcat("available module scores are", so@meta.data %>% select(contains("mscore_group")) %>% colnames %>% paste(., collapse=","))
+              fcat("available marker names are", paste(names(markerlist) , collapse=","))
+              fcat("cellinfo$cell.group.variable is", cellinfo$cell.group.variable)
+              val=names(markerlist)[x]
+              all.ordered.cells<<-so@meta.data %>% dplyr::filter(!!sym(cellinfo$cell.group.variable)==!!val) 
+              all.ordered.cells= all.ordered.cells %>% dplyr::select(!!sym(modulename)) %>% arrange(!!sym(modulename)) 
                
+              fcat("made allorderedcells", modulename)
+              all.ordered.cells=all.ordered.cells %>% rownames
+              if(!new.cells){
+               fcat("no new cells for", modulename)
                 # here we retrieve the reordered cells on the original list
                
                 outputcells=all.ordered.cells[all.ordered.cells %in% cellinfo$cell.list[[names(markerlist)[x]]]]
@@ -10313,29 +10689,656 @@ cellinfo.seriatecells.seurat=function(cellinfo, so , new.cells=T, ncells=100, re
           }
             
 }
-###################################################################################
-# transfer specific cache name to the newest version						
-###################################################################################	
+
+
 
 ################################################################################
-# move cache with specific string directly to the current version
+# save cellbygene h5ad
 ################################################################################
-						
-transfer.cache.direct=function(cachestring, obj){
-simpleCache(cachestring %>% addversion, {obj}, assignToVar="obj", recreate=T)
-obj  
-}
-						
-###################################################################################
-# get an english number
-###################################################################################
 
-english.number<- function(number) {
-  if (!requireNamespace("english", quietly = TRUE)) {
-    install.packages("english")
-  }
-  library(english)
+save.cellxgene=function(so, name="singlecellobject", path=paste0(config$out_root), reduction.use="umap"){
   
-  result <- as.character(english::as.english(number))
-  return(result)
+  
+  ##cell by gene does not work well with numerical seurat clusters
+  so@meta.data = so@meta.data %>% dplyr::mutate(seurat_clusters=paste0("cluster_", seurat_clusters))
+  ##cellxgene can only use the default umap projection as the one shown on the platform so we rename the desired one
+  if(reduction.use!="umap"){
+    so@reductions$umap=so@reductions[[reduction.use]]
+    colnames(so@reductions$umap@cell.embeddings)=c("UMAP_1", "UMAP_2")
+  }
+  
+  savename=file.path(path, paste0(name, ".h5Seurat"))
+SaveH5Seurat(so, filename = savename)
+Convert(savename, dest = "h5ad")
 }
+
+
+
+
+filter.marker.sets <- function(seurat_obj, marker_list) {
+  # Get all genes in the Seurat object
+  genes_in_obj <- rownames(seurat_obj)
+  
+  # Keep only marker sets that overlap with Seurat genes
+  filtered_list <- lapply(marker_list, function(gene_set) {
+    intersect(gene_set, genes_in_obj)
+  })
+  
+  # Remove empty gene sets
+  filtered_list <- filtered_list[lengths(filtered_list) > 0]
+  
+  return(filtered_list)
+}
+ 
+################################################################################
+# improved module score wrapper around seurat's AddModuleScore function that gets rid of small lists and surgically removes pesky numbers
+################################################################################
+
+AddModuleScore3=function(object, features,rcache=NULL, ...){
+  if(is.null(rcache)){
+    rcache=paste0("modulescore_metadata_id_", digest::digest(package.vars(object, features)))
+  }
+  
+  features=filter.marker.sets(object, features)
+  fcat("total number of viable sets to test:", length(as.list(features)))
+  
+  simpleCache(rcache, {
+  features=features[lapply(features, function(x) if(length(x)<1){F}else{T}) %>% Reduce(c, .)]
+  names(features)=paste0("mscore_group_",names(features), "_s") #add an artificial flag to be later removed, thereby patching AddModuleScore's bizarre name modification
+  object=AddModuleScore(object, features, name=names(features))
+
+  #AddModuleScore adds numbers to each signature's name so we find those new names
+modnames=paste0(names(features), 1:length(features))
+fcat("cleaning up ")
+
+allcols=colnames(object@meta.data)
+
+which.to.change=(allcols %in% modnames)
+allcols[which.to.change]=gsub("_s[0-9]+$", "", allcols[which.to.change] )
+
+#clean.names=gsub("mscore_group_", "", names(allcols[which.to.change]))
+
+#if the cluster names are numbers after trimming, then leave the ms_cluster prefix in.
+#if(!is.number.like(clean.names)){
+#  allcols[which.to.change]=clean.names
+#}
+
+colnames(object@meta.data)=allcols
+object@meta.data[, allcols[which.to.change],drop=F]
+}, assignToVar="metamat", reload=T)
+object=AddMetaData(object, metamat)
+object
+}    
+
+
+################################################################################
+# functions for data import
+################################################################################
+
+
+add.row.suffix=function(df, suf="-1"){
+  
+  rn=rownames(df)
+  rn=paste0(rn, suf)
+  
+  rownames(df)=rn
+  
+}
+
+import.dataset=function(folder){
+CreateSeuratObject(Read10X_h5(file.path(config$data_root, folder, "filtered_feature_bc_matrix.h5")), project=strsplit(folder, split="/")[[1]][2])
+}
+
+import.clones=function(folder){
+fread(file.path(config$data_root, folder, "clones.txt")) %>% as.data.frame %>% dplyr::mutate(cell_id=paste0(cell_id, "-1"), clone_nr_ds=paste_(strsplit(folder, split="/")[[1]][2],clone_nr )) %>% col2names(., "cell_id") 
+}
+
+
+################################################################################
+# set markers from a collection of options
+################################################################################
+
+setmarkers<- function(so, markerset=1){
+  so$RNA@misc$markers=so$RNA@misc[[markerset]]$markers
+  so$RNA@misc$top_markers=so$RNA@misc[[markerset]]$top_markers
+  so
+}
+
+
+
+plot.cluster.sizes <- function(seurat_obj, cluster_var = "seurat_clusters") {
+  # Check if the clustering variable exists
+  if (!cluster_var %in% colnames(seurat_obj@meta.data)) {
+    stop(paste("Clustering variable", cluster_var, "not found in metadata."))
+  }
+  
+  # Count cells per cluster
+  cluster_counts <- seurat_obj@meta.data %>%
+    group_by(!!sym(cluster_var)) %>% 
+    summarise(n=n()) %>%
+    arrange(desc(n)) %>%
+    mutate(cluster_var := factor(!!sym(cluster_var), levels = !!sym(cluster_var)))  # preserve order
+  
+  # Plot
+  ggplot(cluster_counts, aes(x = !!sym(cluster_var), y = n)) +
+    geom_bar(stat = "identity", fill = "#4C72B0") +
+    labs(x = "Cluster", y = "Number of cells", title = "Cell count per cluster") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+}
+
+
+
+is.numeric.like <- function(x) {
+  all(!is.na(suppressWarnings(as.numeric(x))))
+}
+
+get.module.name=function(x) paste0("mscore_group_", x)
+
+
+
+
+cellinfo.order.groups.natural=function(cellinfo){
+cellinfo$cell.list=cellinfo$cell.list[cellinfo$cell.list %>% names %>% mixedorder]
+cellinfo$markerlist=cellinfo$markerlist[cellinfo$markerlist %>% names %>% mixedorder]
+refresh.cellinfo(cellinfo)
+}
+
+
+
+keep.cellgroups.pattern=function(cellinfo, pattern){
+ cellinfo$cell.list = cellinfo$cell.list[grepl(pattern, names(cellinfo$cell.list))] 
+refresh.cellinfo(cellinfo)
+ }
+
+
+################################################################################
+# subset specific clusters
+################################################################################
+
+subset.clusters=function(so, clusvar, clusters){
+  
+ so[ , so@meta.data %>% filter(!!sym(clusvar) %in% clusters) %>% rownames]  
+  
+}
+
+
+################################################################################
+# get function defaults for quick debugging
+################################################################################
+
+get.function.defaults <- function(fun) {
+  # If input is a string, get the function by name
+  if (is.character(fun)) {
+    fun <- get(fun, mode = "function", envir = parent.frame())
+  }
+
+  # Get formals (arguments and defaults)
+  formals_list <- formals(fun)
+
+  # Replace missing default values with NULL
+  defaults <- lapply(formals_list, function(x) {
+    if (is.symbol(x)) return(NULL)
+    eval(x)
+  })
+
+  return(defaults)
+}
+
+################################################################################
+# function to retrieve the loaded genes
+################################################################################
+
+get.loaded.genes=function(so, npcs=5, ngenes=5){
+lapply(1:npcs, function(x) Loadings(so.pax6) %>% as.data.frame %>% arrange(-!!sym(paste0("PC_",x))) %>% head(ngenes) %>% rownames) %>% Reduce(c, .)
+}
+################################################################################
+# workflow t make a tidy heatmap out of a seurat object and its respective cellinfo
+################################################################################
+heatmap.workflow=function(so, cellinfo, colorlist=allcolors, extra.genes=NULL, extra.annotation=NULL){
+cellinfo2=add.cell.annotation(so, cellinfo=cellinfo , vars = "hto_demux")
+cellinfo3=cellinfo2 %>% segregate.cells(., variables = c(cellinfo$cell.group.variable, "hto_demux")) %>% cellinfo.order.groups.natural
+if(is.null(colorlist[[cellinfo3$cell.group.variable]])){
+  
+  colorlist[[cellinfo3$cell.group.variable]]<-rainbow(length(cellinfo3$cell.list)) %>% givename(., names(cellinfo3$cell.list))
+allcolors[[cellinfo3$cell.group.variable]]<<-rainbow(length(cellinfo3$cell.list)) %>% givename(., names(cellinfo3$cell.list))
+}
+fcat(dput(colorlist[[cellinfo3$cell.group.variable]]))
+
+if(!is.null(extra.annotation)){
+  cellinfo3=cellinfo3 %>% add.cell.annotation(so, ., extra.annotation)
+}
+#allcolors[[cellinfo3$marker.group.variable]]=rainbow(length(cellinfo3$markerlist)) %>% givename(., names(cellinfo3$markerlist))
+hm=cellinfo.heatmap(so=so, cellinfo=cellinfo3, assay="SCT", genes.to.label = c((cellinfo3 %>% adjust.markers(., 3))$markers, landmark.genes, extra.genes) , colorlist=allcolors)
+
+tpdf(paste0("heatmap_",Project(so),"_by_", cellinfo$cell.group.variable),  sca=6)
+print(hm)
+dev.off()
+}
+
+
+
+
+################################################################################
+# For each cell, calculate what percentage of the markers of each signatutre are expressed.
+################################################################################
+
+AddMarkerPercentages <- function(seurat_obj, marker_list, assay = NULL, slot = "data") {
+  if (is.null(assay)) {
+    assay <- DefaultAssay(seurat_obj)
+  }
+  
+  # Extract expression matrix
+  expr_mat <- GetAssayData(seurat_obj, assay = assay, slot = slot)
+  
+  for (marker_name in names(marker_list)) {
+    markers <- marker_list[[marker_name]]
+    
+    # Keep only markers present in data
+    markers_present <- intersect(markers, rownames(expr_mat))
+    
+    if (length(markers_present) == 0) {
+      warning(paste("No markers found in data for", marker_name))
+      seurat_obj[[marker_name]] <- NA
+      next
+    }
+    
+    # Expression logical matrix: TRUE if expressed (>0)
+    expr_logical <- expr_mat[markers_present, , drop = FALSE] > 0
+    
+    # Calculate % expressed per cell
+    percent_expr <- Matrix::colSums(expr_logical) / length(markers_present) * 100
+    
+    # Add to metadata
+    seurat_obj[[paste0("pct_group_",marker_name)]] <- percent_expr
+  }
+  
+  return(seurat_obj)
+}
+
+
+plot.signature.profiles=function(so, cellinfo, colorlist=allcolors){
+install_and_load("patchwork")
+fcat("calculating signatures")
+so=AddModuleScore3(so, cellinfo$markerlist)  
+fcat("calculating perentages")
+so=AddMarkerPercentages(so, cellinfo$markerlist)  
+
+if(is.null(colorlist[[cellinfo$cell.group.variable]])){
+  fcat("creating colors for categories")
+  colorlist[[cellinfo$cell.group.variable]]<-rainbow(length(cellinfo$cell.list)) %>% givename(., names(cellinfo$cell.list))
+allcolors[[cellinfo$cell.group.variable]]<<-rainbow(length(cellinfo$cell.list)) %>% givename(., names(cellinfo$cell.list))
+}
+
+plt=lapply(1:length(cellinfo$markerlist), function(x){
+  
+ggplot(so@meta.data, aes(x=!!sym(paste0("mscore_group_",names(cellinfo$markerlist)[x])), y=!!sym(paste0("pct_group_",names(cellinfo$markerlist)[x])), color=!!sym(cellinfo$cell.group.variable)))+geom_point()+scale_color_manual(values=allcolors[[cellinfo$cell.group.variable]])
+
+  }) %>% Reduce('+', .)
+plt
+}
+
+
+################################################################################
+#
+################################################################################
+
+
+marker.umap<- function(seurat_obj, 
+                            markers, 
+                            colorby, 
+                            neighbors = 30, 
+                            min_dist = 0.3, 
+                            repulsion_strength = 1, mscorevar=NULL) {
+  
+  # Ensure markers are present in the SCT assay
+  markers_present <- intersect(markers, rownames(seurat_obj[["RNA"]]))
+  if (length(markers_present) == 0) {
+    stop("None of the markers are present in the RNA assay.")
+  }
+  
+  # Create new assay with only these markers
+  new_assay <- seurat_obj[["SCT"]][markers_present, ]
+  seurat_obj[["marker_assay"]] <- CreateAssayObject(
+                                                    data = new_assay)
+  
+  DefaultAssay(seurat_obj) <- "marker_assay"
+  
+  # Run PCA & UMAP
+  seurat_obj <- ScaleData(seurat_obj, features = markers_present, verbose = FALSE)
+  seurat_obj <- RunPCA(seurat_obj, features = markers_present, verbose = FALSE)
+  seurat_obj <- RunUMAP(seurat_obj, dims = 1:min(length(markers_present), 10),
+                        n.neighbors = neighbors,
+                        min.dist = min_dist,
+                        repulsion.strength = repulsion_strength,
+                        verbose = FALSE)
+  
+  # Make UMAP plot
+  if(colorby=="seurat_clusters"){cols= adjust.seurat.colors(seurat_obj)}else{ allcolors[[colorby]]}
+  p <- DimPlot(seurat_obj, reduction = "umap", group.by = colorby) + 
+    ggtitle(paste("UMAP on markers:", paste(markers_present, collapse = ", ")))+scale_color_manual(values=cols)
+  if(!is.null(mscorevar)){
+  p2 <- FeaturePlot(seurat_object, reduction="umap", features=mscorevar)
+  }else{p2<-FeaturePlot(seurat_object, reduction="umap", features=markers_present[1])}
+  # Cleanup to free memory
+  gc()
+  
+  return(p)
+}
+
+
+signature_expression_by_percentile <- function(seurat_obj, signature_genes, var, nbreaks = 5) {
+  
+  # Keep only genes present in object
+  signature_genes <- intersect(signature_genes, rownames(seurat_obj))
+  if (length(signature_genes) == 0) stop("None of the signature genes are present in the object.")
+  
+  # Extract metadata variable
+  meta_var <- seurat_obj[[var]][, 1]
+  if (!is.numeric(meta_var)) stop("The variable must be numeric to calculate percentiles.")
+  
+  # Create percentile bins
+  breaks <- quantile(meta_var, probs = seq(0, 1, length.out = nbreaks + 1), na.rm = TRUE)
+  bin_labels <- paste0("P", 1:nbreaks)
+  seurat_obj$percentile_bin <- cut(meta_var, breaks = breaks, labels = bin_labels, include.lowest = TRUE)
+  
+  # Get expression data (logical: > 0 = expressed)
+  expr_data <- GetAssayData(seurat_obj, slot = "data")[signature_genes, ]
+  expr_binary <- expr_data > 0
+  
+  # Calculate percentage of expressing cells per bin & gene
+  results <- data.frame()
+  for (gene in signature_genes) {
+    tmp <- data.frame(
+      gene = gene,
+      bin = bin_labels,
+      pct_expr = sapply(bin_labels, function(b) {
+        cells_in_bin <- WhichCells(seurat_obj, expression = percentile_bin == b)
+        if (length(cells_in_bin) == 0) return(0)
+        mean(expr_binary[gene, cells_in_bin]) * 100
+      })
+    )
+    results <- rbind(results, tmp)
+  }
+  
+  # Plot stacked barplot
+  p <- ggplot(results, aes(x = gene, y = pct_expr, fill = bin)) +
+    geom_bar(stat = "identity", position = "stack") +
+    ylab("% Cells Expressing") + xlab("Gene") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  
+  return(p)
+}
+
+
+library(Seurat)
+
+add_zero_cells <- function(seurat_obj, n_cells = 100, cell_prefix = "zeroCell",rerun=F ) {
+  
+  # Get gene names and create matrix of zeros
+  gene_names <- rownames(seurat_obj)
+  zero_mat <- Matrix::Matrix(0, nrow = length(gene_names), ncol = n_cells, sparse = TRUE)
+  rownames(zero_mat) <- gene_names
+  colnames(zero_mat) <- paste0(cell_prefix, "_", seq_len(n_cells))
+  
+  # Add new cells to the raw counts
+  counts_combined <- cbind(GetAssayData(seurat_obj, slot = "counts"), zero_mat)
+  seurat_obj <- SetAssayData(seurat_obj, slot = "counts", new.data = counts_combined)
+  
+  # Add dummy metadata
+  zero_meta <- data.frame(row.names = colnames(zero_mat), dummy = TRUE, seurat_clusters="mock_zero")
+  meta_combined <- rbind(seurat_obj@meta.data, zero_meta)
+  meta_combined$dummy[is.na(meta_combined$dummy)] <- FALSE
+  seurat_obj@meta.data <- meta_combined
+  
+  
+  # Re-run transformations so new cells are included
+  
+  if(rerun){
+  DefaultAssay(seurat_obj) <- "RNA"
+  seurat_obj <- NormalizeData(seurat_obj)
+  seurat_obj <- FindVariableFeatures(seurat_obj)
+  seurat_obj <- ScaleData(seurat_obj)
+  seurat_obj <- RunPCA(seurat_obj)
+  seurat_obj <- RunUMAP(seurat_obj, dims = 1:20)
+  }
+  return(seurat_obj)
+}
+
+
+
+plot_marker_expression_fraction <- function(seurat_obj, markers, group_var, colorlist=allcolors) {
+  # Ensure grouping variable exists in metadata
+  if (!(group_var %in% colnames(seurat_obj@meta.data))) {
+    stop(paste("Grouping variable", group_var, "not found in Seurat metadata."))
+  }
+  
+  # Extract expression matrix for markers
+  expr <- FetchData(seurat_obj, vars = c(markers, group_var))
+  
+  # Reshape to long format
+  expr_long <- expr %>%
+    pivot_longer(cols = all_of(markers), names_to = "gene", values_to = "expr") %>%
+    mutate(expr_binary = expr > 0) # TRUE/FALSE expression indicator
+  
+  # Compute % of cells expressing per group per gene
+  summary_df <- expr_long %>%
+    group_by(!!sym(group_var), gene) %>%
+    summarise(
+      pct_expressing = 100 * sum(expr_binary) / n(),
+      .groups = "drop"
+    )
+  
+  # Plot
+  p <- ggplot(summary_df, aes(x = gene, y = pct_expressing, fill = !!sym(group_var))) +
+    geom_col(position = "dodge") +
+    theme_minimal(base_size = 14) +
+    ylab("% cells expressing") +
+    xlab("Marker gene") +
+    #theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+    scale_fill_manual(values=colorlist[[group_var]])+facet_wrap(~gene, scales="free_x", nrow=5)
+  
+  return(p)
+}
+
+
+cellinfo.plotfeatures=function(so, cellinfo, markers.per.group=3,umap.number=NULL){
+  
+
+   nms=names(so.mes@reductions)
+   unms=nms[grepl("umap", nms)]
+   
+  if(is.null(umap.number)){
+   rr=unms[length(unms)]# using the last umap generated
+  }else{
+   rr=unms[umap.number] 
+  }
+  
+plt=FeaturePlot(so.mes, features=adjust.markers(cellinfo, markers.per.group)$markers, reduction=rr)  
+
+plt}
+
+
+
+################################################################################
+#n relabel catrgories
+################################################################################
+
+reset.categories<- function(seurat_obj, var_name, new_var_name = NULL) {
+  # Extract variable from metadata
+  var <- seurat_obj@meta.data[[var_name]]
+  
+  # Ensure it's a factor
+  var <- as.factor(var)
+  
+  # Sort the levels and reassign them to 1...n
+  new_labels <- setNames(seq_along(sort(levels(var))), levels(var))
+  
+  # Apply mapping
+  var_numeric <- as.character(new_labels[as.character(var)])
+  
+  # If new_var_name not provided, overwrite
+  if (is.null(new_var_name)) {
+    seurat_obj@meta.data[[var_name]] <- var_numeric
+  } else {
+    seurat_obj@meta.data[[new_var_name]] <- var_numeric
+  }
+  
+  return(seurat_obj)
+}
+
+
+################################################################################
+# smooth based on neighbors so w don't have random cells flying in between.
+################################################################################
+
+relabel_by_neighbors <- function(seurat_obj, group_var, graph_name = "RNA_snn") {
+  # Extract neighbor graph
+  g <- seurat_obj@graphs[[graph_name]]
+  if (is.null(g)) stop(paste("Graph", graph_name, "not found in Seurat object."))
+  
+  # Ensure grouping variable exists
+  if (!(group_var %in% colnames(seurat_obj@meta.data))) {
+    stop(paste("Grouping variable", group_var, "not found in metadata."))
+  }
+  
+  labels <- seurat_obj@meta.data[[group_var]]
+  new_labels <- labels
+  
+  # Go through each cell
+  for (i in seq_len(ncol(g))) {
+    neighbors <- which(g[, i] > 0)  # neighbor indices
+    if (length(neighbors) == 0) next
+    
+    neighbor_labels <- labels[neighbors]
+    
+    # Count frequencies
+    tab <- table(neighbor_labels)
+    max_count <- max(tab)
+    top_labels <- names(tab[tab == max_count])
+    
+    # Only reassign if a unique majority exists
+    if (length(top_labels) == 1 && top_labels != labels[i]) {
+      new_labels[i] <- top_labels
+    }
+  }
+  
+  # Add new labels to metadata
+  seurat_obj@meta.data[[paste0(group_var, "_smoothed")]] <- new_labels
+  
+  return(seurat_obj)
+}
+
+
+################################################################################
+# mutual information between two genes
+################################################################################
+
+
+mutual_info_genes <- function(seurat_obj, gene_x, gene_y, assay = "RNA", slot = "data") {
+  library(infotheo)
+  # Extract expression matrix
+  fcat("getting assay data")
+  mat <- GetAssayData(seurat_obj, assay = assay, slot = slot)
+  fcat("checking if genes are present")
+  # Check if genes exist
+  if (!(gene_x %in% rownames(mat))) stop(paste("Gene", gene_x, "not found in Seurat object."))
+  
+  present.genes= gene_y[gene_y %in% rownames(mat)]
+  if (length(present.genes) ==0) stop(paste("Genes", setdiff(gene_y, present.genes), "not found in Seurat object."))
+  
+  # Binarize expression (1 = expressed, 0 = not expressed)
+   fcat("binarising matrix")
+  mat2=mat[c(gene_x,present.genes), ]>0
+  rownames(mat2)=c(gene_x,present.genes)
+  mis=lapply(1:length(present.genes), function(gy){
+    cat(".")
+    if(gy %% 100 ==0){
+     cat("\n") 
+    }
+  # Compute mutual information
+  mi <- mutinformation(mat2[gene_x, ], mat2[present.genes[gy],])
+  }) %>% Reduce(c,. ) %>% givename(., present.genes)
+  
+  gc()
+  return(mis)
+}
+
+#########################################
+pasteall=function(x) paste(x, collapse="_")
+
+
+################################################################################
+# cellinfo split clusters by condition
+################################################################################
+
+
+geomtype <- function(plot) {
+  if (length(plot$layers) == 0) {
+    return("no geoms")
+  }
+  # Extract the class of the geom object from the first layer
+  gclass <- class(plot$layers[[1]]$geom)[1]
+  # ggplot geoms are like "GeomPoint", "GeomBar", etc.
+  # Strip the "Geom" prefix and lowercase
+  gsub("^Geom", "", gclass) |>
+    tolower()
+}
+
+
+################################################################################
+# write cellranger-style outs folder from a seurat object
+################################################################################
+
+
+write.cellranger.outs <- function(seurat_obj, outdir) {
+  # Load needed packages
+  if (!requireNamespace("Matrix", quietly = TRUE)) {
+    stop("Package 'Matrix' is required.")
+  }
+  
+  # Ensure output directory exists
+  if (!dir.exists(outdir)) {
+    dir.create(outdir, recursive = TRUE)
+  }
+  
+  # Extract raw counts (sparse matrix preferred)
+  counts <- Seurat::GetAssayData(seurat_obj, slot = "counts")
+  
+  # Barcodes
+  barcodes <- colnames(counts)
+  barcodes_file <- file.path(outdir, "barcodes.tsv.gz")
+  writeLines(barcodes, gzfile(barcodes_file))
+  
+  # Features (10x format expects: gene_id, gene_name, feature_type)
+  features <- rownames(counts)
+  features_df <- data.frame(
+    gene_id = features,
+    gene_name = features,
+    feature_type = "Gene Expression"
+  )
+  features_file <- file.path(outdir, "features.tsv.gz")
+  write.table(
+    features_df,
+    file = gzfile(features_file),
+    sep = "\t", quote = FALSE,
+    row.names = FALSE, col.names = FALSE
+  )
+  
+  # Matrix (sparse market matrix format)
+  matrix_file_con <- gzfile(file.path(outdir, "matrix.mtx.gz"), "w")
+  Matrix::writeMM(counts, file = matrix_file_con)
+  close(matrix_file_con)
+  message("CellRanger-like files written to: ", outdir)
+  invisible(TRUE)
+}
+
+################################################################################
+# from cluster object  
+################################################################################
+cluster.to.list <- function(clusters) {
+  split(names(clusters), clusters)
+}
+
+  
