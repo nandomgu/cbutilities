@@ -1,0 +1,19 @@
+# Local OpenSSH config for this project.
+# Copy to config and fill in real values:
+#   cp config.example config
+# Then connect with:
+#   ./bin/connect.sh
+# or:
+#   ssh -F config myserver
+
+Host myserver
+  HostName YOUR.SERVER.HOSTNAME.OR.IP
+  User YOUR_USERNAME
+  Port 22
+  IdentityFile ~/.ssh/id_ed25519
+  IdentitiesOnly yes
+  ForwardAgent no
+  ServerAliveInterval 60
+  ServerAliveCountMax 3
+  # Optional jump host:
+  # ProxyJump jumpuser@jumphost.example.com
