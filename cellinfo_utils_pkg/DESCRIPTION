@@ -1,0 +1,40 @@
+Package: cellinfo.utils.pkg
+Type: Package
+Title: Utilities for Cellinfo Objects Used in Single-Cell Workflows
+Version: 0.1.0
+Authors@R: c(
+    person("Luis", role = c("aut", "cre"),
+           email = "luis@example.com")
+    )
+Description: Provides helpers to create, refresh, annotate, subset, seriate,
+    and visualise cellinfo list objects used alongside Seurat single-cell
+    analyses. Functions were extracted from the project mlutils setup scripts
+    and packaged with roxygen2 documentation. Several workflows also expect
+    companion helpers from the parent mlutils codebase (for example
+    join_meta_exp2(), AddModuleScore3(), seriatecells(), and tpdf()).
+License: MIT + file LICENSE
+Encoding: UTF-8
+LazyData: false
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.2
+Depends: R (>= 4.1.0)
+Imports:
+    ComplexHeatmap,
+    dplyr,
+    ggplot2,
+    graphics,
+    grDevices,
+    grid,
+    gtools,
+    methods,
+    rlang,
+    Seurat,
+    seriation,
+    stats,
+    tidyr,
+    utils,
+    viridis
+Suggests:
+    patchwork,
+    testthat (>= 3.0.0)
+Config/roxygen2/version: 8.1.0
