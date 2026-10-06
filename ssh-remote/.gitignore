@@ -1,0 +1,16 @@
+# Project-local secrets and generated files — never commit these
+config
+*.pem
+*.key
+id_rsa
+id_rsa.pub
+id_ed25519
+id_ed25519.pub
+known_hosts
+known_hosts.old
+secrets/**
+!secrets/.gitkeep
+logs/**
+!logs/.gitkeep
+.env
+.env.*
